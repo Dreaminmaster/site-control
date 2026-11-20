@@ -1,0 +1,6 @@
+interface:
+  display_name: "Site Control · 网站控制与协作"
+  short_description: "为网站建立独立维护、后台、权限与 AI 协作能力"
+  default_prompt: "使用 $site-control 创建或升级网站，并交付可独立维护的控制空间。"
+policy:
+  allow_implicit_invocation: true
