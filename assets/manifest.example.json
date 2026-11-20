@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "skill_version": "1.0.0",
+  "site_id": null,
+  "host": null,
+  "tier": null,
+  "environment": null,
+  "site_url": null,
+  "admin_url": null,
+  "repository_url": null,
+  "source_commit": null,
+  "release_version": null,
+  "capabilities": [],
+  "agent_interfaces": [],
+  "approval_policy": "owner-approval-for-high-risk",
+  "backup_runbook": null,
+  "verification": {
+    "checked_at": null,
+    "checks": []
+  },
+  "limitations": []
+}
