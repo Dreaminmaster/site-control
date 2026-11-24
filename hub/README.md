@@ -57,3 +57,5 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 依赖已锁定；Zod 升级至 4.6.7 后的 CI 扫描报告为 0 已知漏洞（[证据](https://github.com/Dreaminmaster/site-control/actions/runs/45408437201)）。后续采用 npm ci 与强制高危审核；不表示独立安全审核已完成。
 
 新增隔离联调：真实 Hub HTTP + 独立 fixture handler/SDK + 磁盘 SQLite，重启后核对持久化及回滚。新增 Wrangler D1 本地导出/导入恢复演练；恢复副本默认撤销授权、取消未完成变更、保留原库。公开 OAuth 路径加入固定窗口全局限流及前置请求体限制；此方案仍需云端边缘防滥用与真实部署验收。
+
+`npm run prepare:staging -- sc-test-<unique-name>` 可生成独立测试环境配置（仅本地，不自动部署），避免沿用现有资源 ID、路由或环境变量。撤销站点会同时取消未完成提案，重新轮换令牌不能重新激活旧任务；已被领取的在途命令仍需人工核对实际站点版本。

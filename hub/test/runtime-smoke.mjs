@@ -138,9 +138,19 @@ try{
    await check(await post("/admin/approve",{id:findProposal(restoreCard,"approve")}),303,"approve fixture rollback");
    await check(await siteReq("/admin/sync","POST"),200,"actual rollback sync");
    const restored=await (await siteReq("/admin")).json();assert.deepEqual(restored.config,original.config);assert.equal(restored.revision,original.revision+2);
+   await check(await post("/admin/propose",{id:"test-site",revision:String(restored.revision),reason:"Old job must not return",config:JSON.stringify({...restored.config,title:"Must not execute"})}),303,"prepare cancellation");
+   const oldCard=(await dashboard()).split("<article").find(x=>x.includes("Old job must not return"));assert.ok(oldCard);
+   await check(await post("/admin/approve",{id:findProposal(oldCard,"approve")}),303,"approve job before revocation");
    await check(await post("/admin/revoke-site",{id:"test-site"}),303,"revoke fixture");
    assert.equal((await siteReq("/admin/sync","POST")).status,500);
    assert.equal((await (await siteReq("/admin")).json()).revision,restored.revision);
+   const rotated=await check(await post("/admin/rotate",{id:"test-site"}),200,"reconnect fixture after revocation");
+   const replacement=(await rotated.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(replacement);
+   env.SITE_TOKEN=replacement;
+   await check(await siteReq("/admin/sync","POST"),200,"reconnect without reviving job");
+   assert.equal((await (await siteReq("/admin")).json()).revision,restored.revision);
+   assert.deepEqual((await (await siteReq("/admin")).json()).config,original.config);
+   await check(await post("/admin/revoke-site",{id:"test-site"}),303,"final disconnect");
    console.log("PASS: independent fixture handler, on-disk SQLite, actual SDK and Hub HTTP, restart persistence, approved change, rollback and revocation");
  }finally{db.close();rmSync(fixtureDir,{recursive:true,force:true});}
 

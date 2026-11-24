@@ -117,7 +117,14 @@ async function adminWrite(r,e,action){
    else{const v=await first(e,"UPDATE sites SET token_hash=?,expires_at=?,revoked=0,last_seen=NULL WHERE id=? RETURNING id",hash,expiry,id);if(!v)throw err("not_found",404);}
    return html("<h2>网站连接令牌 · 仅此一次</h2><p>将以下值放进网站服务端 Secret，切勿放到浏览器或 Git。</p><pre>"+esc("SITE_ID="+id+"\nHUB_URL="+new URL(r.url).origin+"\nSITE_TOKEN="+token)+"</pre><p>90天有效。关闭页面后不能重新读取，丢失可轮换。</p><a href='/admin'>返回</a>");
  }
- if(action==="revoke-site"){await run(e,"UPDATE sites SET revoked=1,last_seen=NULL WHERE id=?",validateSiteId(id));}
+ if(action==="revoke-site"){
+   const siteId=validateSiteId(id),now=t();
+   await e.DB.batch([
+     q(e,"UPDATE proposals SET status='rejected',updated_at=? WHERE site_id=? AND status='pending'",now,siteId),
+     q(e,"UPDATE proposals SET status='failed',updated_at=? WHERE site_id=? AND status='approved'",now,siteId),
+     q(e,"UPDATE sites SET revoked=1,last_seen=NULL WHERE id=?",siteId)
+   ]);
+ }
  else if(action==="cleanup"){const now=t();await e.DB.batch([q(e,"DELETE FROM sessions WHERE expires_at<=?",now),q(e,"DELETE FROM login_flows WHERE expires_at<=?",now),q(e,"DELETE FROM consent_flows WHERE expires_at<=?",now),q(e,"DELETE FROM rate_limits WHERE window_start<?",Math.floor(now/60000)-1440),q(e,"INSERT INTO audit(action,subject,at) VALUES(?,?,?)","maintenance:cleanup","expired_ephemeral_state",now)]);}
  else if(action==="revoke-agent"){await run(e,"UPDATE agents SET revoked=1 WHERE id=?",id);}
  else if(action==="update-agent"){
