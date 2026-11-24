@@ -1,0 +1,181 @@
+import assert from "node:assert/strict";
+import {spawn,execFileSync} from "node:child_process";
+import {createHash} from "node:crypto";
+import {setTimeout as pause} from "node:timers/promises";
+import {DatabaseSync} from "node:sqlite";
+import {mkdtempSync,readFileSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fixtureHandler} from "../fixture/worker.js";
+import {verifyDeployment} from "../scripts/verify-deployment.mjs";
+const wrangler="./node_modules/.bin/wrangler",base="http://127.0.0.1:8790",session="c".repeat(64);
+const hash=createHash("sha256").update(session).digest("hex");
+const sql="INSERT OR REPLACE INTO sessions(hash,owner_id,expires_at) VALUES('"+hash+"','fixture-owner',"+(Date.now()+600000)+");";
+execFileSync(wrangler,["d1","execute","DB","--local","--command",sql],{stdio:"pipe"});
+const p=spawn(wrangler,["dev","--local","--ip","127.0.0.1","--port","8790","--var","HUB_ORIGIN:"+base,"--var","OWNER_GITHUB_ID:fixture-owner","--var","GITHUB_CLIENT_ID:fixture-client","--var","GITHUB_CLIENT_SECRET:fixture-secret"],{stdio:["ignore","pipe","pipe"],env:{...process.env,CI:"true"}});
+let logs="";p.stdout.on("data",x=>{logs=(logs+x).slice(-10000)});p.stderr.on("data",x=>{logs=(logs+x).slice(-10000)});
+const cookie="__Host-sc_session="+session;
+async function req(path,opts={}){return fetch(base+path,{redirect:"manual",...opts});}
+async function post(path,fields,owner=true,origin=true){return req(path,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded",...(owner?{Cookie:cookie}:{}),...(origin?{Origin:base}:{})},body:new URLSearchParams(fields)});}
+async function site(id,token,action,data){return req("/api/sites/"+id+"/"+action,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(data)});}
+const check=async(response,status,label)=>{if(response.status!==status){const detail=await response.clone().text();assert.equal(response.status,status,label+" · "+detail.slice(0,300));}return response};
+function findProposal(html,action){const m=html.match(new RegExp("action='/admin/"+action+"'><input type='hidden' name='id' value='([^']+)'"));assert.ok(m,"missing "+action+" form");return m[1];}
+try{
+ let ready=false;for(let i=0;i<60;i++){try{const r=await req("/health");if(r.ok&&(await r.json()).configured){ready=true;break;}}catch{}await pause(500);}
+ assert.ok(ready,"Worker did not become ready");
+ const deploymentChecks=await verifyDeployment(base,{allowLoopback:true});assert.equal(deploymentChecks.passed.length,4);
+ console.log("PASS: deployment preflight verifies ready bindings, anonymous login, headers and MCP discovery");
+ assert.match(await (await req("/admin")).text(),/GitHub 登录/);
+ await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"},false),401,"unauthorized owner write");
+ await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"},true,false),403,"CSRF origin rejection");
+ const regA=await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"}),200,"register site A");
+ const tokenA=(await regA.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenA);
+ const resourceSchema=[{id:"policies",label:"Public policies",fields:[{name:"headline",type:"text"},{name:"verified",type:"boolean"}],max_records:10}];
+ const regB=await check(await post("/admin/register",{id:"smoke-b",name:"Fixture B",url:"https://example.invalid/",resource_schema:JSON.stringify(resourceSchema),resource_safe:"yes"}),200,"register site B");
+ const tokenB=(await regB.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenB);assert.notEqual(tokenA,tokenB);
+ const config={title:"Initial",notice:"Synthetic fixture",maintenance:false},next={...config,title:"Approved change"};
+ await check(await site("smoke-b",tokenA,"poll",{}),401,"cross-site token denial");
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:0,config}),200,"first heartbeat");
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:-1,config}),400,"invalid revision");
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:0,config:{...config,extra:"unsupported"}}),400,"invalid configuration");
+ await check(await site("smoke-a",tokenA,"heartbeat",null),400,"invalid JSON object");
+ await check(await post("/admin/propose",{id:"smoke-a",revision:"0",reason:"Synthetic change",config:JSON.stringify(next)}),303,"owner proposal");
+ assert.equal((await (await site("smoke-a",tokenA,"poll",{})).json()).job,null,"pending proposal cannot be fetched");
+ const dashboard=async()=>await (await req("/admin?view=changes",{headers:{Cookie:cookie}})).text();
+ let html=await dashboard(),id=findProposal(html,"approve");
+ assert.match(await (await req("/admin?view=sites&q=smoke-a",{headers:{Cookie:cookie}})).text(),/Fixture A/);
+ assert.match(await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text(),/MCP 连接入口/);
+ await check(await post("/admin/approve",{id}),303,"approve proposal");
+ const job=(await (await site("smoke-a",tokenA,"poll",{})).json()).job;assert.equal(job.id,id);assert.equal(job.expected_revision,0);
+ await check(await site("smoke-a",tokenA,"ack",{id,ok:true,revision:2,config:next}),409,"wrong receipt revision");
+ await check(await site("smoke-a",tokenA,"ack",{id,ok:true,revision:1,config:next}),200,"valid receipt");
+ assert.equal((await (await site("smoke-a",tokenA,"ack",{id,ok:true,revision:1,config:next})).json()).replayed,true);
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:0,config}),409,"stale heartbeat");
+ html=await dashboard();assert.match(html,/Approved change/);assert.match(html,/已确认执行/);
+ await check(await post("/admin/rollback",{id}),303,"rollback creates proposal");
+ html=await dashboard();const rollbackId=findProposal(html,"approve");assert.notEqual(rollbackId,id);
+ await check(await post("/admin/approve",{id:rollbackId}),303,"approve rollback");
+ const rollback=(await (await site("smoke-a",tokenA,"poll",{})).json()).job;assert.deepEqual(rollback.config,config);
+ await check(await site("smoke-a",tokenA,"ack",{id:rollbackId,ok:true,revision:2,config}),200,"rollback receipt");
+ await check(await post("/admin/revoke-site",{id:"smoke-a"}),303,"revoke site");
+ await check(await site("smoke-a",tokenA,"poll",{}),404,"revoked token rejected");
+ const resourceConfig={...config,resources:{policies:[{id:"p1",headline:"Synthetic public record",verified:false}]}};
+ await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config:resourceConfig}),409,"schema mismatch rejected");
+ await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config:resourceConfig,resource_schema:resourceSchema}),200,"other site unaffected");
+ await check(await post("/admin/cleanup",{}),303,"owner-only ephemeral cleanup");
+ const mcp=await req("/mcp",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"fixture",version:"1"}}})});
+ assert.equal(mcp.status,401,"unauthenticated MCP denied");
+ const metadata=await check(await req("/.well-known/oauth-protected-resource/mcp"),200,"resource discovery");assert.equal((await metadata.json()).resource,base+"/mcp");
+
+ // Real OAuth provider issuance using synthetic owner session; no upstream GitHub login.
+ const redirectUri="http://127.0.0.1:8791/callback",verifier="x".repeat(64),challenge=createHash("sha256").update(verifier).digest("base64url");
+ const reg=await req("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_name:"Local smoke test",redirect_uris:[redirectUri],grant_types:["authorization_code","refresh_token"],response_types:["code"],token_endpoint_auth_method:"none"})});
+ assert.ok(reg.status===201||reg.status===200,"dynamic client registration: "+reg.status+" "+(reg.status>=400?await reg.text():""));
+ const client=await reg.json();assert.ok(client.client_id);
+ const params=new URLSearchParams({client_id:client.client_id,redirect_uri:redirectUri,response_type:"code",scope:"control:read control:propose",state:"local-smoke",code_challenge:challenge,code_challenge_method:"S256",resource:base+"/mcp"});
+ const consent=await check(await req("/authorize?"+params,{headers:{Cookie:cookie}}),200,"OAuth consent");
+ const nonce=(await consent.text()).match(/name='nonce' value='([a-f0-9]{64})'/)?.[1];assert.ok(nonce,"consent nonce");
+ const approved=await check(await post("/authorize",{nonce,propose:"yes"}),303,"OAuth grant with no sites");
+ const location=new URL(approved.headers.get("Location"));assert.equal(location.origin,new URL(redirectUri).origin);assert.equal(location.searchParams.get("state"),"local-smoke");
+ const code=location.searchParams.get("code");assert.ok(code,"authorization code");
+ const tokens=await check(await req("/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"authorization_code",client_id:client.client_id,redirect_uri:redirectUri,code,code_verifier:verifier,resource:base+"/mcp"})}),200,"OAuth token exchange");
+ const credential=await tokens.json();assert.ok(credential.access_token);
+ const rpc=async(method,params)=>{const r=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream","MCP-Protocol-Version":"2025-06-18"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});assert.equal(r.status,200,"MCP "+method);return r.json();};
+ const empty=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.deepEqual(JSON.parse(empty.result.content[0].text),[],"zero-site OAuth grant");
+ const ungranted=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-b"}});assert.equal(ungranted.result.isError,true);
+ const emptyGrantPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();
+ const emptyAgentId=findProposal(emptyGrantPage,"revoke-agent");
+ await check(await post("/admin/update-agent",[["id",emptyAgentId],["site","smoke-b"],["write_site","smoke-b"]]),303,"extend empty grant explicitly");
+ const ls=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.ok(!ls.error&&!ls.result?.isError,"list authorized sites");assert.deepEqual(JSON.parse(ls.result.content[0].text).map(x=>x.id),["smoke-b"]);
+ const denied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-a"}});assert.equal(denied.result.isError,true,"OAuth site isolation");
+ const proposal=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-b",expected_revision:0,reason:"OAuth fixture proposal",config:{...config,title:"MCP proposed"}}});assert.equal(JSON.parse(proposal.result.content[0].text).status,"pending");
+ const capabilities=await rpc("tools/call",{name:"list_site_capabilities",arguments:{site_id:"smoke-b"}});assert.deepEqual(JSON.parse(capabilities.result.content[0].text).resources,resourceSchema);
+ const data=await rpc("tools/call",{name:"read_site_resource",arguments:{site_id:"smoke-b",resource_id:"policies"}});assert.equal(JSON.parse(data.result.content[0].text).records[0].headline,"Synthetic public record");
+ const bad=await rpc("tools/call",{name:"propose_site_resource_change",arguments:{site_id:"smoke-b",resource_id:"policies",expected_revision:0,records_json:JSON.stringify([{id:"p2",headline:"Invalid",verified:"yes"}]),reason:"Invalid fixture"}});assert.equal(bad.result.isError,true);
+ const updated=[{id:"p1",headline:"Updated public record",verified:true}];const change=await rpc("tools/call",{name:"propose_site_resource_change",arguments:{site_id:"smoke-b",resource_id:"policies",expected_revision:0,records_json:JSON.stringify(updated),reason:"Update public record"}});const changeId=JSON.parse(change.result.content[0].text).id;assert.ok(changeId);
+ await check(await post("/admin/approve",{id:changeId}),303,"approve resource change");const resourceJob=(await (await site("smoke-b",tokenB,"poll",{})).json()).job;assert.deepEqual(resourceJob.config.resources.policies,updated);assert.equal(resourceJob.config.title,config.title);
+ await check(await site("smoke-b",tokenB,"ack",{id:changeId,ok:true,revision:1,config:resourceJob.config}),200,"resource receipt");const after=await rpc("tools/call",{name:"read_site_resource",arguments:{site_id:"smoke-b",resource_id:"policies"}});assert.deepEqual(JSON.parse(after.result.content[0].text).records,updated);
+ const agentPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();const agentId=findProposal(agentPage,"revoke-agent");
+ // A site created AFTER initial OAuth issuance must be addable to the SAME credential.
+ const regC=await check(await post("/admin/register",{id:"smoke-c",name:"Fixture C",url:"https://example.invalid/"}),200,"register later site");
+ const tokenC=(await regC.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenC);
+ await check(await site("smoke-c",tokenC,"heartbeat",{revision:0,config}),200,"later site first heartbeat");
+ const deniedC=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(deniedC.result.isError,true);
+ await check(await post("/admin/update-agent",[["id",agentId],["site","smoke-b"],["site","smoke-c"],["write_site","smoke-b"]]),303,"extend existing grant");
+ const newList=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.deepEqual(JSON.parse(newList.result.content[0].text).map(x=>x.id).sort(),["smoke-b","smoke-c"]);
+ const readC=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(JSON.parse(readC.result.content[0].text).id,"smoke-c");
+ const noWriteC=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-c",expected_revision:0,reason:"Read-only grant must deny",config:{...config,title:"Forbidden"}}});assert.equal(noWriteC.result.isError,true);
+ const rotateC=await check(await post("/admin/rotate",{id:"smoke-c"}),200,"rotate new site token");
+ const newTokenC=(await rotateC.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(newTokenC);assert.notEqual(newTokenC,tokenC);
+ await check(await site("smoke-c",tokenC,"poll",{}),401,"old token rejected");
+ await check(await site("smoke-c",newTokenC,"heartbeat",{revision:0,config}),200,"rotated token works");
+ console.log("PASS: add a later site to the same OAuth credential, per-site read-only protection, token rotation");
+
+ await check(await post("/admin/revoke-site",{id:"smoke-c"}),303,"revoke authorized site");
+ const reissue=await check(await post("/admin/rotate",{id:"smoke-c"}),200,"reconnect revoked site");
+ const reissuedToken=(await reissue.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(reissuedToken);
+ await check(await site("smoke-c",reissuedToken,"heartbeat",{revision:0,config}),200,"reconnected site reports");
+ const stillDenied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(stillDenied.result.isError,true,"site revocation removes prior agent grant");
+ console.log("PASS: OAuth connects with zero sites; explicit grants added later; site reactivation does not restore revoked AI access");
+ await check(await post("/admin/revoke-agent",{id:agentId}),303,"revoke OAuth grant");
+ const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");
+ console.log("PASS: local OAuth dynamic registration, PKCE, consent, token exchange, actual MCP tool calls, scoped access and revocation");
+
+
+ // Independent persistent fixture: run the real site handler and SDK against the running Hub.
+ // The injected fetcher only bridges the fake HTTPS test origin to local HTTP. No fake receipts.
+ const fixtureDir=mkdtempSync(join(tmpdir(),"sc-fixture-")),fixtureDb=join(fixtureDir,"fixture.sqlite");
+ let db=new DatabaseSync(fixtureDb);
+ const dbAdapter={prepare(sql){return {bind(...args){return {first:async()=>db.prepare(sql).get(...args)??null,run:async()=>({meta:{changes:Number(db.prepare(sql).run(...args).changes)}})}}}}};
+ try{
+   db.exec(readFileSync(new URL("../fixture/migrations/0001_fixture.sql",import.meta.url),"utf8"));
+   const reg=await check(await post("/admin/register",{id:"test-site",name:"Independent fixture",url:"https://fixture.invalid/"}),200,"register independent fixture");
+   const fixtureToken=(await reg.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(fixtureToken);
+   const handler=fixtureHandler(async(url,opts)=>{assert.equal(url.origin,"https://hub.invalid");return req(url.pathname,opts);});
+   const env={FIXTURE_DB:dbAdapter,SITE_ID:"test-site",HUB_URL:"https://hub.invalid/",SITE_TOKEN:fixtureToken,FIXTURE_ADMIN_TOKEN:"z".repeat(40)};
+   const siteReq=(path,method="GET",auth=true)=>handler.fetch(new Request("https://fixture.invalid"+path,{method,headers:auth?{Authorization:"Bearer "+env.FIXTURE_ADMIN_TOKEN}:{}}),env);
+   assert.equal((await siteReq("/admin","GET",false)).status,401);
+   await check(await siteReq("/admin/sync","POST"),200,"fixture reports independently");
+   const original=await (await siteReq("/admin")).json(),changed={...original.config,title:"Real fixture update"};
+   await check(await post("/admin/propose",{id:"test-site",revision:String(original.revision),reason:"Integrated fixture proposal",config:JSON.stringify(changed)}),303,"fixture proposal");
+   const html=await dashboard(),jobId=html.match(/action='\/admin\/approve'><input type='hidden' name='id' value='([^']+)'/g);assert.ok(jobId?.length);
+   // Other pending proposals can exist. Use the exact test site's proposal id from its card.
+   const card=html.split("<article").find(x=>x.includes("Integrated fixture proposal"));assert.ok(card);
+   const fid=findProposal(card,"approve");await check(await post("/admin/approve",{id:fid}),303,"approve integrated fixture");
+   await check(await siteReq("/admin/sync","POST"),200,"actual SDK commit and receipt");
+   db.close();db=new DatabaseSync(fixtureDb);
+   assert.equal((await (await siteReq("/admin")).json()).config.title,changed.title);
+   assert.match(await (await siteReq("/","GET",false)).text(),/Real fixture update/);
+   assert.match(await dashboard(),/已确认执行/);
+   await check(await post("/admin/rollback",{id:fid}),303,"create fixture rollback");
+   const restoreCard=(await dashboard()).split("<article").find(x=>x.includes("Restore previous values from "+fid));assert.ok(restoreCard);
+   await check(await post("/admin/approve",{id:findProposal(restoreCard,"approve")}),303,"approve fixture rollback");
+   await check(await siteReq("/admin/sync","POST"),200,"actual rollback sync");
+   const restored=await (await siteReq("/admin")).json();assert.deepEqual(restored.config,original.config);assert.equal(restored.revision,original.revision+2);
+   await check(await post("/admin/propose",{id:"test-site",revision:String(restored.revision),reason:"Old job must not return",config:JSON.stringify({...restored.config,title:"Must not execute"})}),303,"prepare cancellation");
+   const oldCard=(await dashboard()).split("<article").find(x=>x.includes("Old job must not return"));assert.ok(oldCard);
+   await check(await post("/admin/approve",{id:findProposal(oldCard,"approve")}),303,"approve job before revocation");
+   await check(await post("/admin/revoke-site",{id:"test-site"}),303,"revoke fixture");
+   assert.equal((await siteReq("/admin/sync","POST")).status,500);
+   assert.equal((await (await siteReq("/admin")).json()).revision,restored.revision);
+   const rotated=await check(await post("/admin/rotate",{id:"test-site"}),200,"reconnect fixture after revocation");
+   const replacement=(await rotated.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(replacement);
+   env.SITE_TOKEN=replacement;
+   await check(await siteReq("/admin/sync","POST"),200,"reconnect without reviving job");
+   assert.equal((await (await siteReq("/admin")).json()).revision,restored.revision);
+   assert.deepEqual((await (await siteReq("/admin")).json()).config,original.config);
+   await check(await post("/admin/revoke-site",{id:"test-site"}),303,"final disconnect");
+   console.log("PASS: independent fixture handler, on-disk SQLite, actual SDK and Hub HTTP, restart persistence, approved change, rollback and revocation");
+ }finally{db.close();rmSync(fixtureDir,{recursive:true,force:true});}
+
+ await check(await post("/logout",{}),303,"owner logout");
+ await check(await post("/admin/register",{id:"after-logout",name:"Denied",url:"https://example.invalid/"}),401,"session revoked at logout");
+ // Unauthenticated request bodies are bounded before the OAuth provider parses them.
+ await check(await req("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:"x".repeat(33000)}),413,"public body limit");
+ // Exhaust only the synthetic login endpoint; fixed-window edge protection is separate.
+ let limited=false;for(let i=0;i<35;i++){const q=await req("/login");if(q.status===429){assert.equal(q.headers.get("Retry-After"),"60");limited=true;break;}}
+ assert.ok(limited,"public login budget");
+ console.log("PASS: public OAuth request limits and global login budget");
+ console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");
+}catch(e){console.error("Runtime smoke failed:",e.message);console.error(logs.replace(/Bearer [a-f0-9]{64}/g,"Bearer [redacted]"));process.exitCode=1;}
+finally{p.kill("SIGTERM");}
