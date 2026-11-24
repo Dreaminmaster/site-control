@@ -43,3 +43,7 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 ## OAuth 本地集成验收
 
 隔离环境中使用合成管理员会话，真实 OAuth 动态客户端注册、PKCE、同意、令牌交换及 MCP JSON-RPC 调用；不触碰真实 GitHub 登录或生产令牌。实际第三方客户端及真实 GitHub 身份仍需部署后测试。资源处理程序同时校验 OAuth token scope 和 D1 的逐站授权。
+
+## 独立发布门槛
+
+[发布与恢复操作手册](RELEASE.md) 将隔离部署、真实登录、测试站、OAuth、恢复演练与现有网站接入明确分开。平台允许零个真实站点；现有网站是否接入由所有者另行选择。接入不是平台完成的前提。
