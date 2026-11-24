@@ -145,13 +145,13 @@ const web={async fetch(r,e){
    const u=new URL(r.url),p=u.pathname;
    if(p==="/health"&&r.method==="GET")return json({service:"site-control-hub",version:"2.0.0-alpha.1",configured:!!(e.DB&&e.OWNER_GITHUB_ID&&e.GITHUB_CLIENT_ID&&e.GITHUB_CLIENT_SECRET)});
    need(e);
-   if(p==="/"||p==="/admin"&&r.method==="GET"){const s=await session(r,e);return s?dashboard(e):html("<h2>独立网站 · 统一控制</h2><p>仅指定GitHub账户可以登录，没有公共注册。</p><a href='/login'>使用 GitHub 登录</a>");}
-   if(p==="/login"&&r.method==="GET")return startLogin(r,e);
-   if(p==="/callback"&&r.method==="GET")return callback(r,e);
-   if(p==="/authorize")return consent(r,e);
+   if(p==="/"||p==="/admin"&&r.method==="GET"){const s=await session(r,e);return s?await dashboard(e):html("<h2>独立网站 · 统一控制</h2><p>仅指定GitHub账户可以登录，没有公共注册。</p><a href='/login'>使用 GitHub 登录</a>");}
+   if(p==="/login"&&r.method==="GET")return await startLogin(r,e);
+   if(p==="/callback"&&r.method==="GET")return await callback(r,e);
+   if(p==="/authorize")return await consent(r,e);
    if(p==="/logout"&&r.method==="POST"){origin(r);const s=await owner(r,e);await run(e,"DELETE FROM sessions WHERE hash=?",s.hash);return redirect("/",secureCookie(S,"",0));}
-   if(p.startsWith("/admin/")&&r.method==="POST")return adminWrite(r,e,p.slice(7));
-   const match=p.match(/^\/api\/sites\/([a-z][a-z0-9-]{1,47})\/(heartbeat|poll|ack)$/);if(match)return siteApi(r,e,match[1],match[2]);
+   if(p.startsWith("/admin/")&&r.method==="POST")return await adminWrite(r,e,p.slice(7));
+   const match=p.match(/^\/api\/sites\/([a-z][a-z0-9-]{1,47})\/(heartbeat|poll|ack)$/);if(match)return await siteApi(r,e,match[1],match[2]);
    return json({error:"not_found"},404);
  }catch(x){return json({error:x.status?x.message:"request_failed"},x.status||500);}
 }};
