@@ -24,7 +24,7 @@
 POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site token>，JSON。无对外任意 URL 请求；Hub 只存声明的网址用于人工识别。心跳报 {revision,config}；poll 返回已批准 job 或 null；ack 报 {id,ok,revision,config}（失败只报 id,ok:false）。仅传公开/可共享维护字段。网站本地数据仍是事实来源。一个网站一次最多一个批准未确认的提案；任何变更须由网站实际执行并返回与审批内容一致的结果。恢复为新提案，不删除历史。
  
 ## 风险和迁移
-这是 alpha，不是安全审计后的生产版本。OAuth 库/SDK版本、Cloudflare D1/KV 绑定、端到端会话、浏览器、真实 MCP 和跨站 adapter 均需实测。需要补齐限流、保留期/清理、备份恢复、部署锁定依赖、安全审计、撤销后在途请求策略（撤销会拒绝后续连接，不能撤回已经领取的命令）、独立站点本地维护接口，以及每种业务数据的 schema 和脱敏策略。Hub 不代理原站登录 cookie。Cloudflare 运行环境、ChatGPT Sites 网络及 Secret 能力未经验证。禁止因接入困难将私人网站公开。现有网站迁移顺序：独立 fixture → 移民规划的非敏感政策条目适配 → USYD Radar 公开活动 → 其余站点；USYD Canvas 保留现有独立只读插件、身份/数据隔离，最后单独评估。任何真实数据写入、定时任务和发布必须按原有审批约定。
+这是 alpha，不是安全审计后的生产版本。OAuth 库/SDK版本、Cloudflare D1/KV 绑定、端到端会话、浏览器、真实 MCP 和跨站 adapter 均需实测。需要补齐限流、保留期/清理、备份恢复、部署锁定依赖、安全审计、撤销后在途请求策略（撤销会拒绝后续连接，不能撤回已经领取的命令）、独立站点本地维护接口，以及每种业务数据的 schema 和脱敏策略。Hub 不代理原站登录 cookie。Cloudflare 运行环境、ChatGPT Sites 网络及 Secret 能力未经验证。禁止因接入困难将私人网站公开。独立 fixture 验收后停止；任何现有网站是否接入由所有者另行逐个选择，不设默认迁移顺序。任何真实数据写入、定时任务和发布必须按原有审批约定。
 
 ## 独立测试站
 
@@ -36,7 +36,7 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
 
 ## 安全加固（待 CI 与真实部署复验）
 
-新增数据库迁移 0002：合法提案状态转换、版本与撤销检查；已认证站点/管理员/AI 主体每分钟 120 次固定窗口限流；管理员可手动清理过期会话、登录/授权流程及旧限流计数（不删除审计和业务数据）；MCP 请求体限制与站点轮询凭证再验证。该限流不覆盖 OAuth Provider 内部公开注册/令牌端点，正式上线前仍需平台边缘防滥用策略、安全审查和备份演练。已领取的命令不能因撤销而保证撤回。没有设置后台定时任务。
+新增数据库迁移 0002：合法提案状态转换、版本与撤销检查；已认证站点/管理员/AI 主体每分钟 120 次固定窗口限流；管理员可手动清理过期会话、登录/授权流程及旧限流计数（不删除审计和业务数据）；MCP 请求体限制与站点轮询凭证再验证。公开注册/令牌端点现有前置全局限流与请求体限制，正式上线前仍需平台边缘防滥用策略、安全审查和备份演练。已领取的命令不能因撤销而保证撤回。没有设置后台定时任务。
 
 Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIGIN` 后，Worker 只接受该 origin，MCP 资源为其 `/mcp`；HTTP 只允许 loopback 测试地址。参考 https://developers.cloudflare.com/changelog/post/2026-10-01-workers-oauth-provider-1x/ 。缺少配置会返回 503，而不是 Worker 启动时崩溃。需真实 OAuth 验收。
 
@@ -65,3 +65,7 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 零站点 OAuth 接入：初始授权允许为空，之后可在管理台逐站授权。撤销网站连接同时删除所有 AI 对该站的读/提案授权，轮换令牌恢复连接不会恢复旧 AI 权限。待 CI 验收。
 
 部署探测 `npm run verify:deployment -- https://YOUR-HUB.workers.dev` 仅进行无凭证预检；健康端点同时检查 D1 必需列及 KV 读取，避免绑定已配置但迁移未完成时误报可用。真实账号和远程站点仍需单独验收。
+
+### 首次部署（中文）
+
+[部署操作手册](DEPLOY.zh-CN.md) 集中说明账号授权、新建独立资源、GitHub OAuth、服务端密钥及真实验收。没有自动部署或授权；既有网站不接入。

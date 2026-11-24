@@ -43,3 +43,5 @@ The initial MCP authorization may contain zero sites. Add the fixture's grant ex
 ### Post-deployment preflight
 
 Run `npm run verify:deployment -- https://YOUR-HUB.workers.dev` against your own authorized Hub. No credentials are required. It checks D1 and KV readiness, anonymous owner login, security headers, OAuth discovery and unauthenticated MCP refusal. It does not approve changes, issue tokens, or run a real login. A passing report is only a preflight; do not mark production acceptance complete without the remaining authenticated tests. `/health` returns 503 unless configuration and required database columns/KV reads are ready.
+
+Chinese owner quickstart: [DEPLOY.zh-CN.md](DEPLOY.zh-CN.md). Use the staging configs and never reuse an existing resource without explicit authorization.
