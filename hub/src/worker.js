@@ -51,8 +51,8 @@ async function propose(e,site,actor,expected,config,reason){
  const next=normConfig(config);if(next===s.config)throw err("no_change");const id=crypto.randomUUID();
  const guard=actor.startsWith("agent:")?" AND EXISTS(SELECT 1 FROM agents a WHERE a.id=? AND a.revoked=0 AND a.expires_at>? AND a.can_propose=1 AND EXISTS(SELECT 1 FROM json_each(a.sites) WHERE value=sites.id) AND EXISTS(SELECT 1 FROM json_each(a.writable_sites) WHERE value=sites.id))":"";
  const args=actor.startsWith("agent:")?[actor.slice(6),t()]:[];
- const result=await run(e,"INSERT INTO proposals(id,site_id,actor,reason,expected_revision,before_config,config,status,created_at,updated_at) SELECT ?,id,?,?,revision,config,?,'pending',?,? FROM sites WHERE id=? AND revision=? AND revoked=0 AND expires_at>?"+guard,id,actor,reason.trim(),next,t(),t(),site,expected,t(),...args);
- if(result.meta.changes!==1)throw err("stale_revision",409);return {id,site_id:site,status:"pending",expected_revision:expected};
+ const result=await first(e,"INSERT INTO proposals(id,site_id,actor,reason,expected_revision,before_config,config,status,created_at,updated_at) SELECT ?,id,?,?,revision,config,?,'pending',?,? FROM sites WHERE id=? AND revision=? AND revoked=0 AND expires_at>?"+guard+" RETURNING id",id,actor,reason.trim(),next,t(),t(),site,expected,t(),...args);
+ if(!result)throw err("stale_revision",409);return {id,site_id:site,status:"pending",expected_revision:expected};
 }
 async function startLogin(r,e,returnPath="/admin"){
  const state=key(),u=new URL(r.url); if(returnPath!=="/admin"&&!returnPath.startsWith("/authorize?"))throw err("invalid_return");
@@ -109,7 +109,7 @@ async function adminWrite(r,e,action){
  if(action==="register"||action==="rotate"){
    validateSiteId(id);const token=key(),hash=await sha(token),expiry=t()+7776000000;
    if(action==="register"){const name=String(f.get("name")||"").trim();if(!name||name.length>100)throw err("invalid_name");const url=secureUrl(String(f.get("url")||""));await run(e,"INSERT INTO sites(id,name,url,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?)",id,name,url,hash,expiry,t());}
-   else{const v=await run(e,"UPDATE sites SET token_hash=?,expires_at=?,revoked=0,last_seen=NULL WHERE id=?",hash,expiry,id);if(!v.meta.changes)throw err("not_found",404);}
+   else{const v=await first(e,"UPDATE sites SET token_hash=?,expires_at=?,revoked=0,last_seen=NULL WHERE id=? RETURNING id",hash,expiry,id);if(!v)throw err("not_found",404);}
    return html("<h2>网站连接令牌 · 仅此一次</h2><p>将以下值放进网站服务端 Secret，切勿放到浏览器或 Git。</p><pre>"+esc("SITE_ID="+id+"\nHUB_URL="+new URL(r.url).origin+"\nSITE_TOKEN="+token)+"</pre><p>90天有效。关闭页面后不能重新读取，丢失可轮换。</p><a href='/admin'>返回</a>");
  }
  if(action==="revoke-site"){await run(e,"UPDATE sites SET revoked=1,last_seen=NULL WHERE id=?",validateSiteId(id));}
@@ -120,11 +120,11 @@ async function adminWrite(r,e,action){
    const ids=[...new Set(f.getAll("site").map(String))];if(ids.length>100)throw err("too_many_sites");
    for(const site of ids)await activeSite(e,site);
    const writes=a.can_propose?[...new Set(f.getAll("write_site").map(String))].filter(site=>ids.includes(site)):[];
-   const v=await run(e,"UPDATE agents SET sites=?,writable_sites=? WHERE id=? AND revoked=0 AND expires_at>?",JSON.stringify(ids),JSON.stringify(writes),id,t());if(v.meta.changes!==1)throw err("grant_unavailable",409);
+   const v=await first(e,"UPDATE agents SET sites=?,writable_sites=? WHERE id=? AND revoked=0 AND expires_at>? RETURNING id",JSON.stringify(ids),JSON.stringify(writes),id,t());if(!v)throw err("grant_unavailable",409);
  }
  else if(action==="propose"){let c;try{c=JSON.parse(String(f.get("config")))}catch{throw err("invalid_json")}await propose(e,id,"owner",Number(f.get("revision")),c,String(f.get("reason")||""));}
- else if(action==="approve"){const v=await run(e,"UPDATE proposals SET status='approved',updated_at=? WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM sites s WHERE s.id=proposals.site_id AND s.revision=proposals.expected_revision AND s.revoked=0 AND s.expires_at>?) AND NOT EXISTS(SELECT 1 FROM proposals p WHERE p.site_id=proposals.site_id AND p.status='approved')",t(),id,t());if(v.meta.changes!==1)throw err("stale_or_conflicting_approval",409);}
- else if(action==="reject"){const v=await run(e,"UPDATE proposals SET status='rejected',updated_at=? WHERE id=? AND status='pending'",t(),id);if(v.meta.changes!==1)throw err("not_pending",409);}
+ else if(action==="approve"){const v=await first(e,"UPDATE proposals SET status='approved',updated_at=? WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM sites s WHERE s.id=proposals.site_id AND s.revision=proposals.expected_revision AND s.revoked=0 AND s.expires_at>?) AND NOT EXISTS(SELECT 1 FROM proposals p WHERE p.site_id=proposals.site_id AND p.status='approved') RETURNING id",t(),id,t());if(!v)throw err("stale_or_conflicting_approval",409);}
+ else if(action==="reject"){const v=await first(e,"UPDATE proposals SET status='rejected',updated_at=? WHERE id=? AND status='pending' RETURNING id",t(),id);if(!v)throw err("not_pending",409);}
  else if(action==="rollback"){const p=await first(e,"SELECT * FROM proposals WHERE id=? AND status='applied'",id);if(!p)throw err("not_found",404);const s=await activeSite(e,p.site_id);await propose(e,s.id,"owner",s.revision,JSON.parse(p.before_config),"Restore previous values from "+id);}
  else throw err("unknown_action",404);
  return redirect("/admin");
@@ -135,8 +135,8 @@ async function siteApi(r,e,id,action){
  if(action==="heartbeat"){
    let rev;try{rev=checkRevision(b.revision)}catch{throw err("invalid_revision")};const config=normConfig(b.config);
    if(rev<s.revision||rev===s.revision&&s.config!==config)throw err("revision_conflict",409);
-   const v=await run(e,"UPDATE sites SET revision=?,config=?,last_seen=? WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=? AND (?=revision OR NOT EXISTS(SELECT 1 FROM proposals WHERE site_id=? AND status='approved'))",rev,config,t(),id,s.token_hash,t(),s.revision,rev,id);
-   if(v.meta.changes!==1)throw err("pending_job_or_conflict",409);return json({ok:true,revision:rev});
+   const v=await first(e,"UPDATE sites SET revision=?,config=?,last_seen=? WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=? AND (?=revision OR NOT EXISTS(SELECT 1 FROM proposals WHERE site_id=? AND status='approved')) RETURNING id",rev,config,t(),id,s.token_hash,t(),s.revision,rev,id);
+   if(!v)throw err("pending_job_or_conflict",409);return json({ok:true,revision:rev});
  }
  if(action==="poll"){const p=await first(e,"SELECT p.id,p.site_id,p.expected_revision,p.config,p.status FROM proposals p JOIN sites s ON s.id=p.site_id WHERE p.site_id=? AND p.status='approved' AND s.token_hash=? AND s.revoked=0 AND s.expires_at>?",id,s.token_hash,t());return json({job:p?{...p,config:JSON.parse(p.config)}:null});}
  if(action==="ack"){
@@ -145,7 +145,7 @@ async function siteApi(r,e,id,action){
    if(p.status!=="approved")throw err("job_not_approved",409);
    if(typeof b.ok!=="boolean")throw err("invalid_ack");
    if(b.ok===true&&(b.revision!==p.expected_revision+1||normConfig(b.config)!==p.config))throw err("bad_receipt",409);
-   const v=await run(e,"UPDATE proposals SET status=?,updated_at=? WHERE id=? AND site_id=? AND status='approved' AND EXISTS(SELECT 1 FROM sites WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=?)",b.ok?"applied":"failed",t(),p.id,id,id,s.token_hash,t(),p.expected_revision);if(v.meta.changes!==1)throw err("ack_conflict",409);return json({ok:true,status:b.ok?"applied":"failed"});
+   const v=await first(e,"UPDATE proposals SET status=?,updated_at=? WHERE id=? AND site_id=? AND status='approved' AND EXISTS(SELECT 1 FROM sites WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=?) RETURNING id",b.ok?"applied":"failed",t(),p.id,id,id,s.token_hash,t(),p.expected_revision);if(!v)throw err("ack_conflict",409);return json({ok:true,status:b.ok?"applied":"failed"});
  }
  throw err("not_found",404);
 }

@@ -12,7 +12,7 @@ const cookie="__Host-sc_session="+session;
 async function req(path,opts={}){return fetch(base+path,{redirect:"manual",...opts});}
 async function post(path,fields,owner=true,origin=true){return req(path,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded",...(owner?{Cookie:cookie}:{}),...(origin?{Origin:base}:{})},body:new URLSearchParams(fields)});}
 async function site(id,token,action,data){return req("/api/sites/"+id+"/"+action,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(data)});}
-const check=async(response,status,label)=>{assert.equal(response.status,status,label);return response};
+const check=async(response,status,label)=>{if(response.status!==status){const detail=await response.clone().text();assert.equal(response.status,status,label+" · "+detail.slice(0,300));}return response};
 function findProposal(html,action){const m=html.match(new RegExp("action='/admin/"+action+"'><input type='hidden' name='id' value='([^']+)'"));assert.ok(m,"missing "+action+" form");return m[1];}
 try{
  let ready=false;for(let i=0;i<60;i++){try{const r=await req("/health");if(r.ok&&(await r.json()).configured){ready=true;break;}}catch{}await pause(500);}
