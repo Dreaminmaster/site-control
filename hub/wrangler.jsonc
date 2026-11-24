@@ -1,0 +1,22 @@
+{
+  "name": "site-control-hub",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-25",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "site-control-hub",
+      "database_id": "REPLACE_WITH_YOUR_D1_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "REPLACE_WITH_YOUR_KV_ID"
+    }
+  ]
+}
