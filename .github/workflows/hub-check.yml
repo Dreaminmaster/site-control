@@ -24,6 +24,9 @@ jobs:
       - run: npx wrangler d1 migrations apply DB --local
         env:
           CI: "true"
+      - run: node test/runtime-smoke.mjs
+        env:
+          CI: "true"
       - run: npm run build
         env:
           CI: "true"

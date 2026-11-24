@@ -29,3 +29,7 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
 ## 独立测试站
 
 已附独立 Worker/D1 fixture，位于 [fixture/README.md](fixture/README.md)。仅使用合成数据，具有自身持久化配置与独立管理令牌，手动同步后可从首页验证修改。不表示已完成真实 Cloudflare 部署。
+
+## 本地 HTTP 验收
+
+在 CI 的隔离 D1 中注入合成 owner session，启动本地 Worker，使用真实 HTTP 端点检查注册、CSRF、跨站拒绝、审批、回执、重放、恢复、撤销及未认证 MCP 拒绝。不使用真实 GitHub 身份或生产凭证；真实 GitHub OAuth 和独立 ChatGPT 插件连接仍然是上线门槛。
