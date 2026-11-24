@@ -18,12 +18,12 @@
 
 `███░░░░`  基础实现、离线测试与本地 HTTP/OAuth/MCP 验收已通过。  
 **当前阶段：** 本地 HTTP、OAuth/MCP、浏览器及恢复验收已通过；首次云端部署等待所有者授权。
-**最近核验：** 2026-11-25（Australia/Sydney）；完整功能验收 `863125b`，[测试证据](https://github.com/Dreaminmaster/site-control/actions/runs/45493419775)。部署预检提交 `34393e9` 的 HTTP 与恢复测试已通过，完整 CI [待最终结果](https://github.com/Dreaminmaster/site-control/actions/runs/45493511488)。
+**最近核验：** 2026-11-25（Australia/Sydney）；完整功能与部署预检验收 `34393e9`，[完整 CI 已通过](https://github.com/Dreaminmaster/site-control/actions/runs/45493511488)。
 
 | 阶段 / Gate | 进度 | 验收依据 / 下一步 |
 | --- | --- | --- |
 | 01 基础架构与源码 | 🟢 已完成 | 五页管理台、D1/KV、SDK、7 个 MCP 工具、通用资源集合 |
-| 02 离线测试与构建 | 🟢 已通过 | [18 项测试、锁定依赖审计、双数据库迁移、双 Worker 构建及浏览器](https://github.com/Dreaminmaster/site-control/actions/runs/45493419775) |
+| 02 离线测试与构建 | 🟢 已通过 | [18 项测试、锁定依赖审计、双数据库迁移、双 Worker 构建及浏览器](https://github.com/Dreaminmaster/site-control/actions/runs/45493511488) |
 | 03 HTTP / 本地 OAuth / MCP | 🟢 已通过 | [零站点 OAuth、显式新增权限、撤销后不恢复旧授权、实际 fixture 与回滚](https://github.com/Dreaminmaster/site-control/actions/runs/45493419775)；合成身份 |
 | 04 安全与发布准备 | 🟡 本地已通过，待云端复核 | [D1/KV 就绪探测、部署预检、本地恢复与安全测试](https://github.com/Dreaminmaster/site-control/actions/runs/45493511488)；仍需边缘防滥用及真实安全复核 |
 | 05 Cloudflare 测试部署 | ⚪ 待授权 | 独立 Workers、D1/KV、Secrets、真实 GitHub 身份 |
