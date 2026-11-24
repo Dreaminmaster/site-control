@@ -25,3 +25,7 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
  
 ## 风险和迁移
 这是 alpha，不是安全审计后的生产版本。OAuth 库/SDK版本、Cloudflare D1/KV 绑定、端到端会话、浏览器、真实 MCP 和跨站 adapter 均需实测。需要补齐限流、保留期/清理、备份恢复、部署锁定依赖、安全审计、撤销后在途请求策略（撤销会拒绝后续连接，不能撤回已经领取的命令）、独立站点本地维护接口，以及每种业务数据的 schema 和脱敏策略。Hub 不代理原站登录 cookie。Cloudflare 运行环境、ChatGPT Sites 网络及 Secret 能力未经验证。禁止因接入困难将私人网站公开。现有网站迁移顺序：独立 fixture → 移民规划的非敏感政策条目适配 → USYD Radar 公开活动 → 其余站点；USYD Canvas 保留现有独立只读插件、身份/数据隔离，最后单独评估。任何真实数据写入、定时任务和发布必须按原有审批约定。
+
+## 独立测试站
+
+已附独立 Worker/D1 fixture，位于 [fixture/README.md](fixture/README.md)。仅使用合成数据，具有自身持久化配置与独立管理令牌，手动同步后可从首页验证修改。不表示已完成真实 Cloudflare 部署。

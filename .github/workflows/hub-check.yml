@@ -27,3 +27,9 @@ jobs:
       - run: npm run build
         env:
           CI: "true"
+      - run: npx wrangler d1 migrations apply FIXTURE_DB --local --config wrangler.fixture.jsonc
+        env:
+          CI: "true"
+      - run: npx wrangler deploy --dry-run --config wrangler.fixture.jsonc --outdir dist-fixture
+        env:
+          CI: "true"
