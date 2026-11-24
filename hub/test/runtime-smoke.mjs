@@ -27,6 +27,9 @@ try{
  const config={title:"Initial",notice:"Synthetic fixture",maintenance:false},next={...config,title:"Approved change"};
  await check(await site("smoke-b",tokenA,"poll",{}),401,"cross-site token denial");
  await check(await site("smoke-a",tokenA,"heartbeat",{revision:0,config}),200,"first heartbeat");
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:-1,config}),400,"invalid revision");
+ await check(await site("smoke-a",tokenA,"heartbeat",{revision:0,config:{...config,extra:"unsupported"}}),400,"invalid configuration");
+ await check(await site("smoke-a",tokenA,"heartbeat",null),400,"invalid JSON object");
  await check(await post("/admin/propose",{id:"smoke-a",revision:"0",reason:"Synthetic change",config:JSON.stringify(next)}),303,"owner proposal");
  assert.equal((await (await site("smoke-a",tokenA,"poll",{})).json()).job,null,"pending proposal cannot be fetched");
  const dashboard=async()=>await (await req("/admin",{headers:{Cookie:cookie}})).text();
@@ -46,6 +49,7 @@ try{
  await check(await post("/admin/revoke-site",{id:"smoke-a"}),303,"revoke site");
  await check(await site("smoke-a",tokenA,"poll",{}),404,"revoked token rejected");
  await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config}),200,"other site unaffected");
+ await check(await post("/admin/cleanup",{}),303,"owner-only ephemeral cleanup");
  const mcp=await req("/mcp",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"fixture",version:"1"}}})});
  assert.equal(mcp.status,401,"unauthenticated MCP denied");
  console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");

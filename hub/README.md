@@ -33,3 +33,7 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
 ## 本地 HTTP 验收
 
 在 CI 的隔离 D1 中注入合成 owner session，启动本地 Worker，使用真实 HTTP 端点检查注册、CSRF、跨站拒绝、审批、回执、重放、恢复、撤销及未认证 MCP 拒绝。不使用真实 GitHub 身份或生产凭证；真实 GitHub OAuth 和独立 ChatGPT 插件连接仍然是上线门槛。
+
+## 安全加固（待 CI 与真实部署复验）
+
+新增数据库迁移 0002：合法提案状态转换、版本与撤销检查；已认证站点/管理员/AI 主体每分钟 120 次固定窗口限流；管理员可手动清理过期会话、登录/授权流程及旧限流计数（不删除审计和业务数据）；MCP 请求体限制与站点轮询凭证再验证。该限流不覆盖 OAuth Provider 内部公开注册/令牌端点，正式上线前仍需平台边缘防滥用策略、安全审查和备份演练。已领取的命令不能因撤销而保证撤回。没有设置后台定时任务。

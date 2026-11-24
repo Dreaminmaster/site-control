@@ -21,7 +21,13 @@ const q=(e,sql,...a)=>e.DB.prepare(sql).bind(...a);
 const first=(e,sql,...a)=>q(e,sql,...a).first();
 const rows=async(e,sql,...a)=>(await q(e,sql,...a).all()).results;
 const run=(e,sql,...a)=>q(e,sql,...a).run();
-function need(e){if(!e.DB||!e.OWNER_GITHUB_ID||!e.GITHUB_CLIENT_ID||!e.GITHUB_CLIENT_SECRET)throw err("setup_required",503);}
+async function rate(e,principal,limit){
+ const window=Math.floor(t()/60000);
+ const hit=await first(e,"INSERT INTO rate_limits(principal,window_start,hits) VALUES(?,?,1) ON CONFLICT(principal) DO UPDATE SET hits=CASE WHEN rate_limits.window_start=excluded.window_start THEN rate_limits.hits+1 ELSE 1 END,window_start=excluded.window_start RETURNING hits",principal,window);
+ if(!hit||hit.hits>limit)throw err("rate_limited",429);
+}
+
+function need(e){if(!e.DB||!e.OAUTH_KV||!e.OWNER_GITHUB_ID||!e.GITHUB_CLIENT_ID||!e.GITHUB_CLIENT_SECRET)throw err("setup_required",503);}
 function origin(r){if(r.headers.get("Origin")!==new URL(r.url).origin)throw err("origin_denied",403);}
 async function limitedText(r){
  if(Number(r.headers.get("Content-Length")||0)>MAX)throw err("payload_too_large",413);
@@ -29,21 +35,23 @@ async function limitedText(r){
  const reader=r.body.getReader();const decoder=new TextDecoder();let size=0,out="";
  try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>MAX){await reader.cancel();throw err("payload_too_large",413);}out+=decoder.decode(value,{stream:true});}return out+decoder.decode();}finally{reader.releaseLock();}
 }
-async function body(r){if(!r.headers.get("Content-Type")?.startsWith("application/json"))throw err("content_type_denied",415);const data=await limitedText(r);try{return JSON.parse(data)}catch{throw err("invalid_json")}}
+async function body(r){if(!r.headers.get("Content-Type")?.startsWith("application/json"))throw err("content_type_denied",415);const data=await limitedText(r);try{const x=JSON.parse(data);if(!x||typeof x!=="object"||Array.isArray(x))throw Error("invalid");return x}catch{throw err("invalid_json")}}
 async function form(r){origin(r);if(!r.headers.get("Content-Type")?.startsWith("application/x-www-form-urlencoded"))throw err("content_type_denied",415);return new URLSearchParams(await limitedText(r));}
 async function session(r,e){const raw=cookie(r,S);if(!/^[a-f0-9]{64}$/.test(raw))return null;const hash=await sha(raw);const x=await first(e,"SELECT * FROM sessions WHERE hash=? AND expires_at>?",hash,t());return x&&x.owner_id===String(e.OWNER_GITHUB_ID)?x:null;}
 async function owner(r,e){const s=await session(r,e);if(!s)throw err("login_required",401);return s;}
 function secureUrl(x){let u;try{u=new URL(x)}catch{throw err("invalid_url")}if(u.protocol!=="https:"||u.username||u.password||u.search||u.hash||x.length>500)throw err("invalid_url");return u.href;}
-function normConfig(x){return JSON.stringify(validateConfig(x))}
+function normConfig(x){try{return JSON.stringify(validateConfig(x))}catch{throw err("invalid_config")}}
 function cleanSite(x){return {id:x.id,name:x.name,url:x.url,revision:x.revision,config:x.config?JSON.parse(x.config):null,last_seen:x.last_seen,status:x.revoked?"revoked":x.expires_at<=t()?"expired":isFresh(x.last_seen,t())?"connected":"not_recently_seen"}}
-async function activeSite(e,id){validateSiteId(id);const s=await first(e,"SELECT * FROM sites WHERE id=?",id);if(!s||s.revoked||s.expires_at<=t())throw err("site_unavailable",404);return s;}
+async function activeSite(e,id){try{validateSiteId(id)}catch{throw err("invalid_site_id")}const s=await first(e,"SELECT * FROM sites WHERE id=?",id);if(!s||s.revoked||s.expires_at<=t())throw err("site_unavailable",404);return s;}
 async function siteAuth(r,e,id){const s=await activeSite(e,id);const h=r.headers.get("authorization")||"";if(!/^Bearer [a-f0-9]{64}$/.test(h)||await sha(h.slice(7))!==s.token_hash)throw err("site_auth_denied",401);return s;}
 async function grant(e,id,site,mode){const row=await first(e,"SELECT * FROM agents WHERE id=?",id);if(!row)throw err("agent_denied",403);const g={...row,sites:JSON.parse(row.sites),writable_sites:JSON.parse(row.writable_sites),can_propose:row.can_propose===1};if(site&&!authorized(g,site,mode,t())||!site&&(g.revoked||g.expires_at<=t()))throw err("agent_denied",403);return g;}
 async function propose(e,site,actor,expected,config,reason){
- const s=await activeSite(e,site);checkRevision(expected);if(s.revision!==expected||!s.config)throw err("stale_or_uninitialized",409);
+ const s=await activeSite(e,site);try{checkRevision(expected)}catch{throw err("invalid_revision")};if(s.revision!==expected||!s.config)throw err("stale_or_uninitialized",409);
  if(typeof reason!=="string"||!reason.trim()||reason.length>500)throw err("invalid_reason");
  const next=normConfig(config);if(next===s.config)throw err("no_change");const id=crypto.randomUUID();
- const result=await run(e,"INSERT INTO proposals(id,site_id,actor,reason,expected_revision,before_config,config,status,created_at,updated_at) SELECT ?,id,?,?,revision,config,?,'pending',?,? FROM sites WHERE id=? AND revision=? AND revoked=0 AND expires_at>?",id,actor,reason.trim(),next,t(),t(),site,expected,t());
+ const guard=actor.startsWith("agent:")?" AND EXISTS(SELECT 1 FROM agents a WHERE a.id=? AND a.revoked=0 AND a.expires_at>? AND a.can_propose=1 AND EXISTS(SELECT 1 FROM json_each(a.sites) WHERE value=sites.id) AND EXISTS(SELECT 1 FROM json_each(a.writable_sites) WHERE value=sites.id))":"";
+ const args=actor.startsWith("agent:")?[actor.slice(6),t()]:[];
+ const result=await run(e,"INSERT INTO proposals(id,site_id,actor,reason,expected_revision,before_config,config,status,created_at,updated_at) SELECT ?,id,?,?,revision,config,?,'pending',?,? FROM sites WHERE id=? AND revision=? AND revoked=0 AND expires_at>?"+guard,id,actor,reason.trim(),next,t(),t(),site,expected,t(),...args);
  if(result.meta.changes!==1)throw err("stale_revision",409);return {id,site_id:site,status:"pending",expected_revision:expected};
 }
 async function startLogin(r,e,returnPath="/admin"){
@@ -94,10 +102,10 @@ async function dashboard(e){
  const props=await rows(e,"SELECT * FROM proposals ORDER BY created_at DESC LIMIT 100");
  const agents=await rows(e,"SELECT id,label,sites,writable_sites,can_propose,expires_at,revoked FROM agents ORDER BY expires_at DESC LIMIT 100");
  const audit=await rows(e,"SELECT * FROM audit ORDER BY id DESC LIMIT 50");
- return html("<div class='row'><form method='post' action='/logout'><button>退出登录</button></form><small>网站自主连接；AI不能直接应用变更。状态为实际心跳，不是模拟。</small></div><h2>01 / 注册网站</h2><section><form method='post' action='/admin/register'><label>网站ID <input name='id' required placeholder='example-site'></label><label>显示名称 <input name='name' required maxlength='100'></label><label>网站地址（HTTPS，不主动抓取） <input name='url' type='url' required></label><button>创建独立令牌</button></form><small>令牌仅显示一次，有效90天；保存于对应网站服务器的密钥存储。</small></section><h2>02 / 网站与连接</h2>"+(sites.length?sites.map(x=>{const s=cleanSite(x);return "<article><h3>"+esc(s.name)+" <small>"+esc(s.id)+"</small></h3><p>"+esc(s.url)+"</p><p>状态："+esc(s.status)+" · 版本 "+esc(s.revision)+" · 最近心跳 "+esc(s.last_seen?new Date(s.last_seen).toISOString():"尚未连接")+"</p><pre>"+esc(JSON.stringify(s.config,null,2))+"</pre>"+fbutton("rotate",s.id,"轮换令牌")+fbutton("revoke-site",s.id,"撤销连接")+(s.config&&!x.revoked?"<details><summary>本人创建配置提案</summary><form method='post' action='/admin/propose'><input type='hidden' name='id' value='"+esc(s.id)+"'><input type='hidden' name='revision' value='"+s.revision+"'><label>原因 <input name='reason' required maxlength='500'></label><textarea name='config'>"+esc(JSON.stringify(s.config,null,2))+"</textarea><button>保存提案</button></form></details>":"")+"</article>"}).join(""):"<section>暂无网站；未连接不会显示为在线。</section>")+"<h2>03 / 变更审批</h2>"+(props.length?props.map(p=>"<article><strong>"+esc(p.site_id)+" · "+esc(p.status)+"</strong><p>"+esc(p.reason)+" · 提出者 "+esc(p.actor)+" · 预期版本 "+esc(p.expected_revision)+"</p><div class='row'><div><small>当前 / 旧版本</small><pre>"+esc(p.before_config)+"</pre></div><div><small>拟修改</small><pre>"+esc(p.config)+"</pre></div></div>"+(p.status==="pending"?fbutton("approve",p.id,"批准，等待网站执行")+fbutton("reject",p.id,"拒绝"):p.status==="applied"?fbutton("rollback",p.id,"创建恢复旧值的提案"):"")+"</article>").join(""):"<section>暂无提案。</section>")+"<h2>04 / AI授权</h2><p>一个MCP连接入口：<code>/mcp</code>。在客户端添加后，会打开真实OAuth授权界面。每次授权明确选择网站。</p>"+(agents.length?agents.map(a=>"<article>"+esc(a.label)+" · "+esc(a.sites)+" · "+(a.revoked?"已撤销":a.expires_at<=t()?"已过期":a.can_propose?"读取＋提案":"只读")+"<br><small>到期 "+esc(new Date(a.expires_at).toISOString())+"</small>"+fbutton("revoke-agent",a.id,"撤销AI授权")+(!a.revoked&&a.expires_at>t()?"<details><summary>修改此AI的网站权限（无需重新安装）</summary><form method='post' action='/admin/update-agent'><input type='hidden' name='id' value='"+esc(a.id)+"'>"+sites.filter(s=>!s.revoked&&s.expires_at>t()).map(s=>"<label><input type='checkbox' name='site' value='"+esc(s.id)+"' "+(JSON.parse(a.sites).includes(s.id)?"checked":"")+"> 读取 "+esc(s.name)+"</label>"+(a.can_propose?"<label><input type='checkbox' name='write_site' value='"+esc(s.id)+"' "+(JSON.parse(a.writable_sites).includes(s.id)?"checked":"")+"> 提案 "+esc(s.name)+"</label>":"")).join("")+"<button>保存网站权限</button></form></details>":"")+"</article>").join(""):"<section>暂无AI连接。</section>")+"<h2>05 / 审计</h2>"+audit.map(a=>"<p><small>"+esc(new Date(a.at).toISOString())+"</small> "+esc(a.site_id)+" · "+esc(a.action)+" · "+esc(a.subject)+"</p>").join(""));
+ return html("<div class='row'><form method='post' action='/logout'><button>退出登录</button></form><small>网站自主连接；AI不能直接应用变更。状态为实际心跳，不是模拟。</small></div><h2>01 / 注册网站</h2><section><form method='post' action='/admin/register'><label>网站ID <input name='id' required placeholder='example-site'></label><label>显示名称 <input name='name' required maxlength='100'></label><label>网站地址（HTTPS，不主动抓取） <input name='url' type='url' required></label><button>创建独立令牌</button></form><small>令牌仅显示一次，有效90天；保存于对应网站服务器的密钥存储。</small></section><h2>02 / 网站与连接</h2>"+(sites.length?sites.map(x=>{const s=cleanSite(x);return "<article><h3>"+esc(s.name)+" <small>"+esc(s.id)+"</small></h3><p>"+esc(s.url)+"</p><p>状态："+esc(s.status)+" · 版本 "+esc(s.revision)+" · 最近心跳 "+esc(s.last_seen?new Date(s.last_seen).toISOString():"尚未连接")+"</p><pre>"+esc(JSON.stringify(s.config,null,2))+"</pre>"+fbutton("rotate",s.id,"轮换令牌")+fbutton("revoke-site",s.id,"撤销连接")+(s.config&&!x.revoked?"<details><summary>本人创建配置提案</summary><form method='post' action='/admin/propose'><input type='hidden' name='id' value='"+esc(s.id)+"'><input type='hidden' name='revision' value='"+s.revision+"'><label>原因 <input name='reason' required maxlength='500'></label><textarea name='config'>"+esc(JSON.stringify(s.config,null,2))+"</textarea><button>保存提案</button></form></details>":"")+"</article>"}).join(""):"<section>暂无网站；未连接不会显示为在线。</section>")+"<h2>03 / 变更审批</h2>"+(props.length?props.map(p=>"<article><strong>"+esc(p.site_id)+" · "+esc(p.status)+"</strong><p>"+esc(p.reason)+" · 提出者 "+esc(p.actor)+" · 预期版本 "+esc(p.expected_revision)+"</p><div class='row'><div><small>当前 / 旧版本</small><pre>"+esc(p.before_config)+"</pre></div><div><small>拟修改</small><pre>"+esc(p.config)+"</pre></div></div>"+(p.status==="pending"?fbutton("approve",p.id,"批准，等待网站执行")+fbutton("reject",p.id,"拒绝"):p.status==="applied"?fbutton("rollback",p.id,"创建恢复旧值的提案"):"")+"</article>").join(""):"<section>暂无提案。</section>")+"<h2>04 / AI授权</h2><p>一个MCP连接入口：<code>/mcp</code>。在客户端添加后，会打开真实OAuth授权界面。每次授权明确选择网站。</p>"+(agents.length?agents.map(a=>"<article>"+esc(a.label)+" · "+esc(a.sites)+" · "+(a.revoked?"已撤销":a.expires_at<=t()?"已过期":a.can_propose?"读取＋提案":"只读")+"<br><small>到期 "+esc(new Date(a.expires_at).toISOString())+"</small>"+fbutton("revoke-agent",a.id,"撤销AI授权")+(!a.revoked&&a.expires_at>t()?"<details><summary>修改此AI的网站权限（无需重新安装）</summary><form method='post' action='/admin/update-agent'><input type='hidden' name='id' value='"+esc(a.id)+"'>"+sites.filter(s=>!s.revoked&&s.expires_at>t()).map(s=>"<label><input type='checkbox' name='site' value='"+esc(s.id)+"' "+(JSON.parse(a.sites).includes(s.id)?"checked":"")+"> 读取 "+esc(s.name)+"</label>"+(a.can_propose?"<label><input type='checkbox' name='write_site' value='"+esc(s.id)+"' "+(JSON.parse(a.writable_sites).includes(s.id)?"checked":"")+"> 提案 "+esc(s.name)+"</label>":"")).join("")+"<button>保存网站权限</button></form></details>":"")+"</article>").join(""):"<section>暂无AI连接。</section>")+"<h2>05 / 审计</h2><form method='post' action='/admin/cleanup'><button>清理过期登录状态与旧限流计数</button></form><small>不删除审计、网站、授权记录或历史提案。</small>"+audit.map(a=>"<p><small>"+esc(new Date(a.at).toISOString())+"</small> "+esc(a.site_id)+" · "+esc(a.action)+" · "+esc(a.subject)+"</p>").join(""));
 }
 async function adminWrite(r,e,action){
- await owner(r,e);const f=await form(r),id=String(f.get("id")||"");
+ const admin=await owner(r,e);const f=await form(r),id=String(f.get("id")||"");await rate(e,"owner:"+admin.owner_id,120);
  if(action==="register"||action==="rotate"){
    validateSiteId(id);const token=key(),hash=await sha(token),expiry=t()+7776000000;
    if(action==="register"){const name=String(f.get("name")||"").trim();if(!name||name.length>100)throw err("invalid_name");const url=secureUrl(String(f.get("url")||""));await run(e,"INSERT INTO sites(id,name,url,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?)",id,name,url,hash,expiry,t());}
@@ -105,6 +113,7 @@ async function adminWrite(r,e,action){
    return html("<h2>网站连接令牌 · 仅此一次</h2><p>将以下值放进网站服务端 Secret，切勿放到浏览器或 Git。</p><pre>"+esc("SITE_ID="+id+"\nHUB_URL="+new URL(r.url).origin+"\nSITE_TOKEN="+token)+"</pre><p>90天有效。关闭页面后不能重新读取，丢失可轮换。</p><a href='/admin'>返回</a>");
  }
  if(action==="revoke-site"){await run(e,"UPDATE sites SET revoked=1,last_seen=NULL WHERE id=?",validateSiteId(id));}
+ else if(action==="cleanup"){const now=t();await e.DB.batch([q(e,"DELETE FROM sessions WHERE expires_at<=?",now),q(e,"DELETE FROM login_flows WHERE expires_at<=?",now),q(e,"DELETE FROM consent_flows WHERE expires_at<=?",now),q(e,"DELETE FROM rate_limits WHERE window_start<?",Math.floor(now/60000)-1440),q(e,"INSERT INTO audit(action,subject,at) VALUES(?,?,?)","maintenance:cleanup","expired_ephemeral_state",now)]);}
  else if(action==="revoke-agent"){await run(e,"UPDATE agents SET revoked=1 WHERE id=?",id);}
  else if(action==="update-agent"){
    const a=await first(e,"SELECT * FROM agents WHERE id=? AND revoked=0 AND expires_at>?",id,t());if(!a)throw err("grant_unavailable",404);
@@ -122,14 +131,14 @@ async function adminWrite(r,e,action){
 }
 async function siteApi(r,e,id,action){
  if(r.method!=="POST")throw err("method_denied",405);
- const s=await siteAuth(r,e,id),b=await body(r);
+ const s=await siteAuth(r,e,id),b=await body(r);await rate(e,"site:"+id,120);
  if(action==="heartbeat"){
-   const rev=checkRevision(b.revision),config=normConfig(b.config);
+   let rev;try{rev=checkRevision(b.revision)}catch{throw err("invalid_revision")};const config=normConfig(b.config);
    if(rev<s.revision||rev===s.revision&&s.config!==config)throw err("revision_conflict",409);
    const v=await run(e,"UPDATE sites SET revision=?,config=?,last_seen=? WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=? AND (?=revision OR NOT EXISTS(SELECT 1 FROM proposals WHERE site_id=? AND status='approved'))",rev,config,t(),id,s.token_hash,t(),s.revision,rev,id);
    if(v.meta.changes!==1)throw err("pending_job_or_conflict",409);return json({ok:true,revision:rev});
  }
- if(action==="poll"){const p=await first(e,"SELECT id,site_id,expected_revision,config,status FROM proposals WHERE site_id=? AND status='approved'",id);return json({job:p?{...p,config:JSON.parse(p.config)}:null});}
+ if(action==="poll"){const p=await first(e,"SELECT p.id,p.site_id,p.expected_revision,p.config,p.status FROM proposals p JOIN sites s ON s.id=p.site_id WHERE p.site_id=? AND p.status='approved' AND s.token_hash=? AND s.revoked=0 AND s.expires_at>?",id,s.token_hash,t());return json({job:p?{...p,config:JSON.parse(p.config)}:null});}
  if(action==="ack"){
    const p=await first(e,"SELECT * FROM proposals WHERE id=? AND site_id=?",String(b.id||""),id);if(!p)throw err("unknown_job",404);
    if(p.status==="applied"&&b.ok===true&&b.revision===p.expected_revision+1&&normConfig(b.config)===p.config)return json({ok:true,replayed:true});
@@ -143,7 +152,7 @@ async function siteApi(r,e,id,action){
 const web={async fetch(r,e){
  try{
    const u=new URL(r.url),p=u.pathname;
-   if(p==="/health"&&r.method==="GET")return json({service:"site-control-hub",version:"2.0.0-alpha.1",configured:!!(e.DB&&e.OWNER_GITHUB_ID&&e.GITHUB_CLIENT_ID&&e.GITHUB_CLIENT_SECRET)});
+   if(p==="/health"&&r.method==="GET")return json({service:"site-control-hub",version:"2.0.0-alpha.1",configured:!!(e.DB&&e.OAUTH_KV&&e.OWNER_GITHUB_ID&&e.GITHUB_CLIENT_ID&&e.GITHUB_CLIENT_SECRET)});
    need(e);
    if(p==="/"||p==="/admin"&&r.method==="GET"){const s=await session(r,e);return s?await dashboard(e):html("<h2>独立网站 · 统一控制</h2><p>仅指定GitHub账户可以登录，没有公共注册。</p><a href='/login'>使用 GitHub 登录</a>");}
    if(p==="/login"&&r.method==="GET")return await startLogin(r,e);
@@ -159,7 +168,7 @@ function out(obj){return {content:[{type:"text",text:JSON.stringify(obj)}]}}
 const mcp={async fetch(r,e,ctx){
  try{
    need(e);if(String(ctx.props?.ownerId)!==String(e.OWNER_GITHUB_ID)||!ctx.props?.agentId)throw err("agent_denied",403);
-   const agentId=ctx.props.agentId;await grant(e,agentId,null,"read");
+   const agentId=ctx.props.agentId;await grant(e,agentId,null,"read");await rate(e,"agent:"+agentId,120);
    if(r.headers.has("Origin")&&r.headers.get("Origin")!==new URL(r.url).origin)throw err("origin_denied",403);
    if(Number(r.headers.get("Content-Length")||0)>MAX)throw err("payload_too_large",413);
    const server=new McpServer({name:"Site Control Hub",version:"2.0.0-alpha.1"});
@@ -168,7 +177,8 @@ const mcp={async fetch(r,e,ctx){
    server.registerTool("list_site_changes",{description:"Read bounded proposal history for one authorized site.",inputSchema:{site_id:z.string().max(48)},annotations:{readOnlyHint:true}},async({site_id})=>{try{await grant(e,agentId,site_id,"read");await activeSite(e,site_id);return out(await rows(e,"SELECT id,site_id,reason,expected_revision,status,created_at,updated_at FROM proposals WHERE site_id=? ORDER BY created_at DESC LIMIT 50",site_id));}catch{return {isError:true,...out({error:"access_denied_or_unavailable"})}}});
    server.registerTool("propose_site_change",{description:"Create a pending configuration proposal; cannot approve, apply, run code, change permissions or access private documents.",inputSchema:{site_id:z.string().max(48),expected_revision:z.number().int().nonnegative(),config:z.object({title:z.string().min(1).max(100),notice:z.string().max(1000),maintenance:z.boolean()}).strict(),reason:z.string().min(1).max(500)},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}},async(a)=>{try{await grant(e,agentId,a.site_id,"propose");return out(await propose(e,a.site_id,"agent:"+agentId,a.expected_revision,a.config,a.reason));}catch(x){return {isError:true,...out({error:x.status?x.message:"proposal_failed"})}}});
    const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});await server.connect(transport);
-   return await transport.handleRequest(r);
+   const bounded=r.method==="POST"?new Request(r.url,{method:r.method,headers:r.headers,body:await limitedText(r)}):r;
+   return await transport.handleRequest(bounded);
  }catch(x){return json({error:x.status?x.message:"mcp_failed"},x.status||500);}
 }};
 export default new OAuthProvider({apiRoute:"/mcp",apiHandler:mcp,defaultHandler:web,authorizeEndpoint:"/authorize",tokenEndpoint:"/token",clientRegistrationEndpoint:"/register",scopesSupported:["control:read","control:propose","offline_access"],accessTokenTTL:900,refreshTokenTTL:2592000});
