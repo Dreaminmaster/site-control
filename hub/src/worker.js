@@ -181,4 +181,15 @@ const mcp={async fetch(r,e,ctx){
    return await transport.handleRequest(bounded);
  }catch(x){return json({error:x.status?x.message:"mcp_failed"},x.status||500);}
 }};
-export default new OAuthProvider({apiRoute:"/mcp",apiHandler:mcp,defaultHandler:web,authorizeEndpoint:"/authorize",tokenEndpoint:"/token",clientRegistrationEndpoint:"/register",scopesSupported:["control:read","control:propose","offline_access"],accessTokenTTL:900,refreshTokenTTL:2592000});
+// Canonical resource is deployment configuration, never derived from an untrusted Host header.
+export default {async fetch(r,e,ctx){
+ let base;
+ try{
+   base=new URL(e.HUB_ORIGIN);
+   if(base.username||base.password||base.pathname!=="/"||base.search||base.hash||
+      !(base.protocol==="https:"||base.protocol==="http:"&&["127.0.0.1","localhost","[::1]"].includes(base.hostname)))throw Error("invalid_origin");
+ }catch{return json({error:"hub_origin_not_configured"},503);}
+ if(new URL(r.url).origin!==base.origin)return json({error:"wrong_hub_origin"},421);
+ const provider=new OAuthProvider({apiRoute:"/mcp",apiHandler:mcp,defaultHandler:web,authorizeEndpoint:"/authorize",tokenEndpoint:"/token",clientRegistrationEndpoint:"/register",scopesSupported:["control:read","control:propose","offline_access"],requiredScopes:["control:read"],resourceMetadata:{resource:base.origin+"/mcp",authorization_servers:[base.origin],resource_name:"Site Control Hub"},accessTokenTTL:900,refreshTokenTTL:2592000});
+ return provider.fetch(r,e,ctx);
+}};

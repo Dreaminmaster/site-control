@@ -11,7 +11,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "latest",
+    "@cloudflare/workers-oauth-provider": "^1.0.0",
     "@modelcontextprotocol/sdk": "^1.27.0",
     "zod": "^3.25.0"
   },

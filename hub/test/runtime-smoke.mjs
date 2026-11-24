@@ -6,7 +6,7 @@ const wrangler="./node_modules/.bin/wrangler",base="http://127.0.0.1:8790",sessi
 const hash=createHash("sha256").update(session).digest("hex");
 const sql="INSERT OR REPLACE INTO sessions(hash,owner_id,expires_at) VALUES('"+hash+"','fixture-owner',"+(Date.now()+600000)+");";
 execFileSync(wrangler,["d1","execute","DB","--local","--command",sql],{stdio:"pipe"});
-const p=spawn(wrangler,["dev","--local","--ip","127.0.0.1","--port","8790","--var","OWNER_GITHUB_ID:fixture-owner","--var","GITHUB_CLIENT_ID:fixture-client","--var","GITHUB_CLIENT_SECRET:fixture-secret"],{stdio:["ignore","pipe","pipe"],env:{...process.env,CI:"true"}});
+const p=spawn(wrangler,["dev","--local","--ip","127.0.0.1","--port","8790","--var","HUB_ORIGIN:"+base,"--var","OWNER_GITHUB_ID:fixture-owner","--var","GITHUB_CLIENT_ID:fixture-client","--var","GITHUB_CLIENT_SECRET:fixture-secret"],{stdio:["ignore","pipe","pipe"],env:{...process.env,CI:"true"}});
 let logs="";p.stdout.on("data",x=>{logs=(logs+x).slice(-10000)});p.stderr.on("data",x=>{logs=(logs+x).slice(-10000)});
 const cookie="__Host-sc_session="+session;
 async function req(path,opts={}){return fetch(base+path,{redirect:"manual",...opts});}
@@ -52,6 +52,7 @@ try{
  await check(await post("/admin/cleanup",{}),303,"owner-only ephemeral cleanup");
  const mcp=await req("/mcp",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"fixture",version:"1"}}})});
  assert.equal(mcp.status,401,"unauthenticated MCP denied");
+ const metadata=await check(await req("/.well-known/oauth-protected-resource/mcp"),200,"resource discovery");assert.equal((await metadata.json()).resource,base+"/mcp");
  console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");
 }catch(e){console.error("Runtime smoke failed:",e.message);console.error(logs.replace(/Bearer [a-f0-9]{64}/g,"Bearer [redacted]"));process.exitCode=1;}
 finally{p.kill("SIGTERM");}

@@ -14,7 +14,7 @@
 1. 在 Cloudflare 账户安装 Node/npm，进入 hub，运行 npm install，然后 npm run check 和 npm run build。先生成并审查 package-lock.json；当前依赖解析和 Worker bundling 尚未由本次会话验证。
 2. npx wrangler login（浏览器登录授权，不把 token 发给 AI）；npx wrangler d1 create site-control-hub；npx wrangler kv namespace create OAUTH_KV。也可由 Wrangler 自动配置资源（具体以当前 CLI 提示为准）。若手动创建，将绑定 ID 写入本地部署配置，禁止提交真实账户信息。部署前确认免费额度。
 3. 在 GitHub Settings / Developer settings / OAuth Apps 新建 OAuth App，Homepage URL 为自己的 workers.dev 地址；回调为同一地址 /callback。
-4. npx wrangler secret put GITHUB_CLIENT_ID、GITHUB_CLIENT_SECRET、OWNER_GITHUB_ID（固定数字 ID，不是可改用户名）。用服务端 Secret 安全输入。不要把这些配置写入代码。
+4. npx wrangler secret put HUB_ORIGIN（自己的完整 HTTPS origin，不含路径或尾部以外内容）、GITHUB_CLIENT_ID、GITHUB_CLIENT_SECRET、OWNER_GITHUB_ID（固定数字 ID，不是可改用户名）。用服务端 Secret 安全输入。不要把这些配置写入代码。
 5. npx wrangler d1 migrations apply DB --remote；npx wrangler deploy。实际部署前以 staging/隔离测试库试验，生产发布需 owner 明确批准。
 6. 在 /admin 用指定 GitHub 账号登录，先注册假数据测试站。将一次性 SITE_TOKEN 放到该站 server secret；使用 sdk/adapter.js，真实存储必须原子 CAS，配置只能是白名单字段。
 7. 使用 MCP Inspector 测试 /mcp 的实际 OAuth 流程；再在支持自定义插件的 ChatGPT 客户端安装这一个 MCP。选择 scope control:read 和 control:propose（offline_access 如客户端需要）。OAuth 客户端、回调和资源元数据须按实际平台测试，未通过前不连接真实站。
@@ -37,3 +37,5 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
 ## 安全加固（待 CI 与真实部署复验）
 
 新增数据库迁移 0002：合法提案状态转换、版本与撤销检查；已认证站点/管理员/AI 主体每分钟 120 次固定窗口限流；管理员可手动清理过期会话、登录/授权流程及旧限流计数（不删除审计和业务数据）；MCP 请求体限制与站点轮询凭证再验证。该限流不覆盖 OAuth Provider 内部公开注册/令牌端点，正式上线前仍需平台边缘防滥用策略、安全审查和备份演练。已领取的命令不能因撤销而保证撤回。没有设置后台定时任务。
+
+Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIGIN` 后，Worker 只接受该 origin，MCP 资源为其 `/mcp`；HTTP 只允许 loopback 测试地址。参考 https://developers.cloudflare.com/changelog/post/2026-10-01-workers-oauth-provider-1x/ 。缺少配置会返回 503，而不是 Worker 启动时崩溃。需真实 OAuth 验收。
