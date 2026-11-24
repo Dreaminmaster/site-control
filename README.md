@@ -12,45 +12,48 @@
 [![Stage](https://img.shields.io/badge/Hub-2.0%20Alpha-orange)](https://github.com/Dreaminmaster/site-control/pull/1)
 [![Build](https://github.com/Dreaminmaster/site-control/actions/workflows/hub-check.yml/badge.svg?branch=feature%2Fsite-control-hub-v2)](https://github.com/Dreaminmaster/site-control/actions?query=branch%3Afeature%2Fsite-control-hub-v2)
 ![Deployment](https://img.shields.io/badge/Deployment-not%20deployed-lightgrey)
-![Migration](https://img.shields.io/badge/Migration-not%20started-lightgrey)
+![Migration](https://img.shields.io/badge/Existing%20sites-optional-lightgrey)
 
-**验收阶段进度：2 / 8（25%）** · Delivery gates, not effort or ETA.
+**独立平台验收阶段进度：3 / 7（42.9%）** · Delivery gates, not effort or ETA.
 
-`██░░░░░░`  基础实现、离线测试已通过；HTTP 修复待复验。  
-**当前阶段：** 已修复兼容日期、异步错误捕获和 OAuth 资源配置；新增安全加固，等待本地 HTTP 复验。  
-**最近核验：** 2026-11-25（Australia/Sydney）；代码快照 `b173dc9`。
+`███░░░░`  基础实现、离线测试与本地 HTTP/OAuth/MCP 验收已通过。  
+**当前阶段：** 发布安全与部署准备；真实云端授权仍未获得。  
+**最近核验：** 2026-11-25（Australia/Sydney）；最近完整通过的功能代码 `d5a1f7d`，依赖锁定提交 `ff85f72`（[锁定版本 CI](https://github.com/Dreaminmaster/site-control/actions/runs/45408699718) 待最终结果）。
 
 | 阶段 / Gate | 进度 | 验收依据 / 下一步 |
 | --- | --- | --- |
-| 01 基础架构与源码 | 🟢 已完成 | Hub、D1/KV 设计、SDK、后台及 MCP 基础工具已提交 |
-| 02 离线测试与构建 | 🟢 已通过 | [11 项测试、双数据库迁移及双 Worker dry-run 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45403865831) |
-| 03 HTTP 接口验收 | 🟡 待复验 | [前一轮启动失败](https://github.com/Dreaminmaster/site-control/actions/runs/45406759022)：OAuth Provider 1.x 缺少 canonical resource；已提交修复，[本轮测试](https://github.com/Dreaminmaster/site-control/actions/runs/45407100579) |
-| 04 安全与发布准备 | 🟡 进行中 | 新增限流、请求体约束、数据库状态机约束、撤销再检查和过期状态清理；仍需复验、依赖锁定、安全审核、边缘防滥用及备份恢复 |
-| 05 Cloudflare 测试部署 | ⚪ 待授权 | 真实 Workers、D1/KV 绑定、服务端 Secrets |
-| 06 独立测试站接入 | ⚪ 待部署 | 真实站点注册、持久化、回执、撤销和回滚 |
-| 07 统一 OAuth / MCP | ⚪ 待验证 | 真实 GitHub 登录、独立 ChatGPT 会话调用、单次安装后新增站点 |
-| 08 现有站点接入 | ⚪ 未开始 | 逐站只读验收、业务适配、安全审核后接入，保留原站 |
+| 01 基础架构与源码 | 🟢 已完成 | 五页管理台、D1/KV、SDK、7 个 MCP 工具、通用资源集合 |
+| 02 离线测试与构建 | 🟢 已通过 | [17 项测试、双数据库迁移及双 Worker 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111) |
+| 03 HTTP / 本地 OAuth / MCP | 🟢 已通过 | [实际 Worker HTTP、PKCE、MCP 调用、资源审批、跨站拒绝、同一授权新增站点、令牌轮换](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111)；合成管理员身份 |
+| 04 安全与发布准备 | 🟡 进行中 | [修复 Zod 高危依赖告警，扫描 0 已知漏洞](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111)；依赖已锁定、强制审计，仍需边缘防滥用、安全复核及恢复演练 |
+| 05 Cloudflare 测试部署 | ⚪ 待授权 | 独立 Workers、D1/KV、Secrets、真实 GitHub 身份 |
+| 06 独立测试站云端接入 | ⚪ 待部署 | 独立真实站点持久化、审批、回执、撤销、恢复 |
+| 07 统一 OAuth / MCP 云端 | ⚪ 待验证 | 独立真实 ChatGPT 客户端的连接及跨会话授权 |
+
+**现有网站接入：暂停，平台完成后由所有者逐个决定。** 不计入独立平台完成进度；允许全部原站继续独立运行，不强制迁移。
 
 <details>
 <summary>展开功能进度 / Feature checklist</summary>
 
-| 功能 | 实现 | 真实环境验收 |
+| 功能 | 实现 | 已验证范围 |
 | --- | --- | --- |
-| GitHub 所有者登录 | 🟢 | ⚪ |
-| 站点注册、独立令牌、轮换与撤销 | 🟢 | ⚪ |
-| MCP 四个基础工具与逐站读/提案权限 | 🟢 | ⚪ |
-| 审批、版本检查、审计、恢复提案 | 🟢 | ⚪ |
-| 服务端 SDK 与独立测试站 | 🟢 | ⚪ |
-| 业务数据适配与平台兼容验证 | ⚪ | ⚪ |
-| 正式部署、独立会话接管 | ⚪ | ⚪ |
+| 管理台：概览、网站、审批、AI 授权、审计 | 🟢 | 本地页面渲染与 HTTP 测试；真实浏览器视觉验收待完成 |
+| GitHub 所有者登录 | 🟢 | 合成会话；真实 GitHub 登录待测试 |
+| 站点注册、独立令牌、轮换与撤销 | 🟢 | 本地 HTTP 通过 |
+| MCP 7 个基础与资源工具 | 🟢 | 本地 OAuth/PKCE 及工具调用通过 |
+| 同一 OAuth 连接增加站点、逐站读/提案权限 | 🟢 | 同一令牌测试通过；真实 ChatGPT 待测 |
+| 审批、版本检查、审计、恢复提案 | 🟢 | 本地 D1/HTTP 通过 |
+| 通用资源定义及类型校验 | 🟢 | 小型非敏感记录集合，本地测试通过 |
+| 服务端 SDK 与独立测试站 | 🟢 | 单元与构建通过；云端双站联调待测 |
+| 生产部署、备份恢复、真实客户端 | 🟡 | 发布操作手册已写，尚未实测 |
 
 🟢 已实现或已通过所列验收；🟡 进行中；🔴 阻塞；⚪ 未完成。代码存在不等于服务已上线。
 
 </details>
 
-**开发入口：** [草稿 PR #1](https://github.com/Dreaminmaster/site-control/pull/1) · [开发分支](https://github.com/Dreaminmaster/site-control/tree/feature/site-control-hub-v2) · [Hub 源码与部署说明](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/hub/README.md) · [接入规范](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/references/hub-v2.md)
+**开发入口：** [草稿 PR #1](https://github.com/Dreaminmaster/site-control/pull/1) · [开发分支](https://github.com/Dreaminmaster/site-control/tree/feature/site-control-hub-v2) · [Hub 源码与部署说明](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/hub/README.md) · [独立发布与恢复手册](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/hub/RELEASE.md) · [接入规范](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/references/hub-v2.md)
 
-> **维护规则：** 在 2.0 完成之前保留本区块。每次有实质性开发、测试、部署或接入进展，维护者同时更新默认分支与开发分支的 README，记录核验日期、证据链接、阻塞和下一步；仅通过明确验收门槛的阶段计入进度。构建徽章自动反映 CI，阶段进度由维护者根据验收证据更新。全部验收通过并正式发布后，可替换为稳定版状态与发布记录。公开 README 不得包含私人站点地址、个人数据或密钥。
+> **维护规则：** 在独立平台完成之前保留本区块。每次有实质性开发、测试或部署进展，维护者同时更新默认分支与开发分支的 README，记录核验日期、证据链接、阻塞和下一步；仅通过明确验收门槛的阶段计入进度。构建徽章自动反映 CI，阶段进度由维护者依据验收证据更新。全部独立平台验收通过并正式发布后，可替换为稳定版状态与发布记录。现有网站接入必须单独由所有者确认，不属于平台完成的先决条件。公开 README 不得包含私人站点地址、个人数据或密钥。
 
 <!-- HUB-PROGRESS:END -->
 
