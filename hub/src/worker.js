@@ -165,7 +165,15 @@ async function siteApi(r,e,id,action){
 const web={async fetch(r,e){
  try{
    const u=new URL(r.url),p=u.pathname;
-   if(p==="/health"&&r.method==="GET")return json({service:"site-control-hub",version:"2.0.0-alpha.1",configured:!!(e.DB&&e.OAUTH_KV&&e.OWNER_GITHUB_ID&&e.GITHUB_CLIENT_ID&&e.GITHUB_CLIENT_SECRET)});
+   if(p==="/health"&&r.method==="GET"){
+      const configured=!!(e.DB&&e.OAUTH_KV&&e.OWNER_GITHUB_ID&&e.GITHUB_CLIENT_ID&&e.GITHUB_CLIENT_SECRET);
+      let ready=false;
+      if(configured){try{
+        await Promise.all([first(e,"SELECT resource_schema FROM sites LIMIT 1"),first(e,"SELECT hash FROM sessions LIMIT 1"),first(e,"SELECT principal FROM rate_limits LIMIT 1"),first(e,"SELECT writable_sites FROM agents LIMIT 1"),first(e,"SELECT id FROM proposals LIMIT 1"),first(e,"SELECT id FROM audit LIMIT 1"),e.OAUTH_KV.get("__site_control_readiness__")]);
+        ready=true;
+      }catch{}}
+      return json({service:"site-control-hub",version:"2.0.0-alpha.1",configured,ready},ready?200:503);
+   }
    need(e);
    if(p==="/"||p==="/admin"&&r.method==="GET"){const s=await session(r,e);return s?await dashboard(e,r):html("<h2>独立网站 · 统一控制</h2><p>仅指定GitHub账户可以登录，没有公共注册。</p><a href='/login'>使用 GitHub 登录</a>");}
    if(p==="/login"&&r.method==="GET")return await startLogin(r,e);

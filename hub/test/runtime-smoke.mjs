@@ -7,6 +7,7 @@ import {mkdtempSync,readFileSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fixtureHandler} from "../fixture/worker.js";
+import {verifyDeployment} from "../scripts/verify-deployment.mjs";
 const wrangler="./node_modules/.bin/wrangler",base="http://127.0.0.1:8790",session="c".repeat(64);
 const hash=createHash("sha256").update(session).digest("hex");
 const sql="INSERT OR REPLACE INTO sessions(hash,owner_id,expires_at) VALUES('"+hash+"','fixture-owner',"+(Date.now()+600000)+");";
@@ -22,6 +23,8 @@ function findProposal(html,action){const m=html.match(new RegExp("action='/admin
 try{
  let ready=false;for(let i=0;i<60;i++){try{const r=await req("/health");if(r.ok&&(await r.json()).configured){ready=true;break;}}catch{}await pause(500);}
  assert.ok(ready,"Worker did not become ready");
+ const deploymentChecks=await verifyDeployment(base,{allowLoopback:true});assert.equal(deploymentChecks.passed.length,4);
+ console.log("PASS: deployment preflight verifies ready bindings, anonymous login, headers and MCP discovery");
  assert.match(await (await req("/admin")).text(),/GitHub 登录/);
  await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"},false),401,"unauthorized owner write");
  await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"},true,false),403,"CSRF origin rejection");

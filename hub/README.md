@@ -63,3 +63,5 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 真实浏览器验收加入 CI：Chromium 桌面 1440×900 与手机 390×844，5 个后台页面、文档横向溢出检查及真实搜索表单提交；截图只包含合成站点和测试数据，作为 CI 工件保存。待本轮 CI 复验。
 
 零站点 OAuth 接入：初始授权允许为空，之后可在管理台逐站授权。撤销网站连接同时删除所有 AI 对该站的读/提案授权，轮换令牌恢复连接不会恢复旧 AI 权限。待 CI 验收。
+
+部署探测 `npm run verify:deployment -- https://YOUR-HUB.workers.dev` 仅进行无凭证预检；健康端点同时检查 D1 必需列及 KV 读取，避免绑定已配置但迁移未完成时误报可用。真实账号和远程站点仍需单独验收。
