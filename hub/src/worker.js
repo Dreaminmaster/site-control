@@ -5,7 +5,7 @@ import { z } from "zod";
 import {validateConfig,validateResourceSchema,validateSiteId,checkRevision,authorized,isFresh} from "./core.js";
 import {adminView,adminCss} from "./admin-ui.js";
 
-const MAX=16384;
+const MAX=32768;
 const t=()=>Date.now();
 const key=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,"0")).join("");
 const sha=async(s)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,"0")).join("");
