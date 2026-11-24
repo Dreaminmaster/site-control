@@ -3,3 +3,7 @@ node_modules/
 dist/
 .dev.vars*
 .env*
+
+wrangler.*.local.jsonc
+private-backups/
+dist-fixture/

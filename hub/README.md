@@ -11,7 +11,7 @@
 - 目前没有自动定时任务、任意代码执行、Git 部署权、跨站凭证共享、政策业务接口、上传文件或私密信息。原站独立后台保持不变。不会承诺所有 ChatGPT Sites 均可运行服务器轮询；必须逐站验证实际托管能力。
 
 ## 部署前准备（所有者一次授权）
-1. 在 Cloudflare 账户安装 Node/npm，进入 hub，运行 npm install，然后 npm run check 和 npm run build。先生成并审查 package-lock.json；当前依赖解析和 Worker bundling 尚未由本次会话验证。
+1. 在 Cloudflare 账户安装 Node/npm，进入 hub，运行 npm ci --ignore-scripts、npm audit --audit-level=high、npm run check 和 npm run build。仓库已包含由成功的 CI 解析得到的 package-lock.json。
 2. npx wrangler login（浏览器登录授权，不把 token 发给 AI）；npx wrangler d1 create site-control-hub；npx wrangler kv namespace create OAUTH_KV。也可由 Wrangler 自动配置资源（具体以当前 CLI 提示为准）。若手动创建，将绑定 ID 写入本地部署配置，禁止提交真实账户信息。部署前确认免费额度。
 3. 在 GitHub Settings / Developer settings / OAuth Apps 新建 OAuth App，Homepage URL 为自己的 workers.dev 地址；回调为同一地址 /callback。
 4. npx wrangler secret put HUB_ORIGIN（自己的完整 HTTPS origin，不含路径或尾部以外内容）、GITHUB_CLIENT_ID、GITHUB_CLIENT_SECRET、OWNER_GITHUB_ID（固定数字 ID，不是可改用户名）。用服务端 Secret 安全输入。不要把这些配置写入代码。
@@ -54,4 +54,4 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 
 示例：`[{"id":"policies","label":"Public policies","max_records":10,"fields":[{"name":"headline","type":"text"},{"name":"verified","type":"boolean"}]}]`。每条记录必须有独立 `id`；站点快照在 `resources.policies` 中保存这些字段。SDK 适配需要真实持久化、领域校验及主机权限支持。
 
-CI 正在生成公开 npm 依赖锁文件与运行依赖审核报告，用于后续固定依赖；此阶段尚未完成依赖锁定与审查。
+依赖已锁定；Zod 升级至 4.6.7 后的 CI 扫描报告为 0 已知漏洞（[证据](https://github.com/Dreaminmaster/site-control/actions/runs/45408437201)）。后续采用 npm ci 与强制高危审核；不表示独立安全审核已完成。
