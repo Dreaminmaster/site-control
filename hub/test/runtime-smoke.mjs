@@ -114,7 +114,7 @@ try{
  let db=new DatabaseSync(fixtureDb);
  const dbAdapter={prepare(sql){return {bind(...args){return {first:async()=>db.prepare(sql).get(...args)??null,run:async()=>({meta:{changes:Number(db.prepare(sql).run(...args).changes)}})}}}}};
  try{
-   db.exec(readFileSync(new URL("../fixture/migrations/0001_init.sql",import.meta.url),"utf8"));
+   db.exec(readFileSync(new URL("../fixture/migrations/0001_fixture.sql",import.meta.url),"utf8"));
    const reg=await check(await post("/admin/register",{id:"test-site",name:"Independent fixture",url:"https://fixture.invalid/"}),200,"register independent fixture");
    const fixtureToken=(await reg.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(fixtureToken);
    const handler=fixtureHandler(async(url,opts)=>{assert.equal(url.origin,"https://hub.invalid");return req(url.pathname,opts);});
