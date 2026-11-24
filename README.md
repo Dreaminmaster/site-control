@@ -17,18 +17,20 @@
 **独立平台验收阶段进度：3 / 7（42.9%）** · Delivery gates, not effort or ETA.
 
 `███░░░░`  基础实现、离线测试与本地 HTTP/OAuth/MCP 验收已通过。  
-**当前阶段：** 发布安全与部署准备；真实云端授权仍未获得。  
-**最近核验：** 2026-11-25（Australia/Sydney）；最近完整通过的功能代码 `d5a1f7d`，依赖锁定提交 `ff85f72`（[锁定版本 CI](https://github.com/Dreaminmaster/site-control/actions/runs/45408699718) 待最终结果）。
+**当前阶段：** 本地安全、恢复和双站持久化已通过；云端授权未获得，浏览器自动验收已通过。
+**最近核验：** 2026-11-25（Australia/Sydney）；完整通过的代码 `43f1b9f`，[18 项测试与恢复演练](https://github.com/Dreaminmaster/site-control/actions/runs/45414333075)；浏览器验收提交 `bb78a4b`，[本轮 CI](https://github.com/Dreaminmaster/site-control/actions/runs/45414547923)。
 
 | 阶段 / Gate | 进度 | 验收依据 / 下一步 |
 | --- | --- | --- |
 | 01 基础架构与源码 | 🟢 已完成 | 五页管理台、D1/KV、SDK、7 个 MCP 工具、通用资源集合 |
-| 02 离线测试与构建 | 🟢 已通过 | [17 项测试、双数据库迁移及双 Worker 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111) |
-| 03 HTTP / 本地 OAuth / MCP | 🟢 已通过 | [实际 Worker HTTP、PKCE、MCP 调用、资源审批、跨站拒绝、同一授权新增站点、令牌轮换](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111)；合成管理员身份 |
-| 04 安全与发布准备 | 🟡 进行中 | [修复 Zod 高危依赖告警，扫描 0 已知漏洞](https://github.com/Dreaminmaster/site-control/actions/runs/45408500111)；依赖已锁定、强制审计，仍需边缘防滥用、安全复核及恢复演练 |
+| 02 离线测试与构建 | 🟢 已通过 | [18 项测试、锁定依赖审计、双数据库迁移与双 Worker 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45414333075) |
+| 03 HTTP / 本地 OAuth / MCP | 🟢 已通过 | [实际 Worker、PKCE、MCP、独立 fixture SDK 与磁盘持久化、重连、回滚](https://github.com/Dreaminmaster/site-control/actions/runs/45414333075)；合成身份 |
+| 04 安全与发布准备 | 🟡 本地已通过，待云端复核 | [锁定依赖扫描 0 已知漏洞、公开 OAuth 限流、D1 隔离导出/恢复、旧任务撤销](https://github.com/Dreaminmaster/site-control/actions/runs/45414333075)；独立部署配置生成器已实现；仍需云端边缘防滥用及真实安全复核 |
 | 05 Cloudflare 测试部署 | ⚪ 待授权 | 独立 Workers、D1/KV、Secrets、真实 GitHub 身份 |
 | 06 独立测试站云端接入 | ⚪ 待部署 | 独立真实站点持久化、审批、回执、撤销、恢复 |
 | 07 统一 OAuth / MCP 云端 | ⚪ 待验证 | 独立真实 ChatGPT 客户端的连接及跨会话授权 |
+
+**下一步阻塞：** 需要一次 Cloudflare 账户授权，使用新建独立测试资源（不接入现有站点）。参阅 [隔离部署手册](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/hub/RELEASE.md)。
 
 **现有网站接入：暂停，平台完成后由所有者逐个决定。** 不计入独立平台完成进度；允许全部原站继续独立运行，不强制迁移。
 
@@ -37,15 +39,15 @@
 
 | 功能 | 实现 | 已验证范围 |
 | --- | --- | --- |
-| 管理台：概览、网站、审批、AI 授权、审计 | 🟢 | 本地页面渲染与 HTTP 测试；真实浏览器视觉验收待完成 |
+| 管理台：概览、网站、审批、AI 授权、审计 | 🟢 | 本地渲染/HTTP 通过；真实浏览器五页、双尺寸与搜索自动测试已通过；[浏览器 CI](https://github.com/Dreaminmaster/site-control/actions/runs/45414547923) |
 | GitHub 所有者登录 | 🟢 | 合成会话；真实 GitHub 登录待测试 |
 | 站点注册、独立令牌、轮换与撤销 | 🟢 | 本地 HTTP 通过 |
 | MCP 7 个基础与资源工具 | 🟢 | 本地 OAuth/PKCE 及工具调用通过 |
 | 同一 OAuth 连接增加站点、逐站读/提案权限 | 🟢 | 同一令牌测试通过；真实 ChatGPT 待测 |
 | 审批、版本检查、审计、恢复提案 | 🟢 | 本地 D1/HTTP 通过 |
 | 通用资源定义及类型校验 | 🟢 | 小型非敏感记录集合，本地测试通过 |
-| 服务端 SDK 与独立测试站 | 🟢 | 单元与构建通过；云端双站联调待测 |
-| 生产部署、备份恢复、真实客户端 | 🟡 | 发布操作手册已写，尚未实测 |
+| 服务端 SDK 与独立测试站 | 🟢 | 真实本地 Hub HTTP + 独立 fixture handler + 磁盘 SQLite；持久化、回滚、撤销后重连均通过；云端待测 |
+| 独立发布、备份恢复、真实客户端 | 🟡 | 本地 D1 导出/隔离恢复通过；生产备份恢复、Cloudflare 部署、真实客户端待验收 |
 
 🟢 已实现或已通过所列验收；🟡 进行中；🔴 阻塞；⚪ 未完成。代码存在不等于服务已上线。
 
