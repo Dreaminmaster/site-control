@@ -82,12 +82,12 @@ async function consent(r,e){
    if(!client)throw err("unknown_client",403);
    const nonce=key();await run(e,"INSERT INTO consent_flows VALUES(?,?,?,?)",await sha(nonce),s.hash,JSON.stringify(request),t()+600000);
    const sites=await rows(e,"SELECT id,name FROM sites WHERE revoked=0 AND expires_at>? ORDER BY name LIMIT 100",t());
-   return html("<h2>授权一个AI客户端</h2><p>客户端："+esc(client.clientName||request.clientId)+"</p><p>仅允许选择的网站。AI可以读取安全配置及提交提案，不能审批或执行修改。授权最长30天，可随时撤销。</p><form method='post' action='/authorize'><input type='hidden' name='nonce' value='"+nonce+"'>"+sites.map(x=>"<label><input type='checkbox' name='site' value='"+esc(x.id)+"'> 读取 "+esc(x.name)+" / "+esc(x.id)+"</label><label><input type='checkbox' name='write_site' value='"+esc(x.id)+"'> 允许对该站提交提案（仍需选中读取权限）</label>").join("")+"<label><input type='checkbox' name='propose' value='yes'>允许此客户端获得提出修改的 OAuth 范围（仍需本人审批）</label><button>确认授权</button></form><p><a href='/admin'>取消</a></p>");
+   return html("<h2>授权一个AI客户端</h2><p>客户端："+esc(client.clientName||request.clientId)+"</p><p>仅允许选择的网站。可以不选任何网站，先连接客户端；之后在后台单独增加权限。AI可以读取安全配置及提交提案，不能审批或执行修改。授权最长30天，可随时撤销。</p><form method='post' action='/authorize'><input type='hidden' name='nonce' value='"+nonce+"'>"+sites.map(x=>"<label><input type='checkbox' name='site' value='"+esc(x.id)+"'> 读取 "+esc(x.name)+" / "+esc(x.id)+"</label><label><input type='checkbox' name='write_site' value='"+esc(x.id)+"'> 允许对该站提交提案（仍需选中读取权限）</label>").join("")+"<label><input type='checkbox' name='propose' value='yes'>允许此客户端获得提出修改的 OAuth 范围（仍需本人审批）</label><button>确认授权</button></form><p><a href='/admin'>取消</a></p>");
  }
  if(r.method!=="POST"||!s)throw err("login_required",401);
  const f=await form(r),nonce=String(f.get("nonce")||"");if(!/^[a-f0-9]{64}$/.test(nonce))throw err("bad_consent");
  const flow=await first(e,"DELETE FROM consent_flows WHERE hash=? AND session_hash=? AND expires_at>? RETURNING request_json",await sha(nonce),s.hash,t());if(!flow)throw err("consent_expired",403);
- const request=JSON.parse(flow.request_json),ids=[...new Set(f.getAll("site").map(String))];if(!ids.length||ids.length>100)throw err("select_sites");
+ const request=JSON.parse(flow.request_json),ids=[...new Set(f.getAll("site").map(String))];if(ids.length>100)throw err("too_many_sites");
  for(const id of ids)await activeSite(e,id);
  const id=crypto.randomUUID(),canPropose=f.get("propose")==="yes"&&request.scope.includes("control:propose");
  const scope=request.scope.filter(x=>x==="control:read"||x==="offline_access"||x==="control:propose"&&canPropose);
@@ -122,6 +122,7 @@ async function adminWrite(r,e,action){
    await e.DB.batch([
      q(e,"UPDATE proposals SET status='rejected',updated_at=? WHERE site_id=? AND status='pending'",now,siteId),
      q(e,"UPDATE proposals SET status='failed',updated_at=? WHERE site_id=? AND status='approved'",now,siteId),
+     q(e,"UPDATE agents SET sites=(SELECT json_group_array(value) FROM json_each(agents.sites) WHERE value<>?),writable_sites=(SELECT json_group_array(value) FROM json_each(agents.writable_sites) WHERE value<>?) WHERE EXISTS(SELECT 1 FROM json_each(agents.sites) WHERE value=?) OR EXISTS(SELECT 1 FROM json_each(agents.writable_sites) WHERE value=?)",siteId,siteId,siteId,siteId),
      q(e,"UPDATE sites SET revoked=1,last_seen=NULL WHERE id=?",siteId)
    ]);
  }

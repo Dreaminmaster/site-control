@@ -37,3 +37,5 @@ The platform may be independently usable with zero connected real websites. Repo
 ### Prepare isolated staging configuration
 
 From `hub/`, run `npm run prepare:staging -- sc-test-<unique-name>`. This only generates two ignored local Wrangler configuration files and refuses to overwrite an existing file. Verify the account and confirm these names are unused, then deploy using `npx wrangler deploy --config wrangler.staging.local.jsonc`; use that exact config for subsequent migrations and secrets. Use `wrangler.fixture.staging.local.jsonc` for the separate fixture. The generated files do not copy production routes, resource IDs or environment values. This generator has no network access and cannot perform deployment by itself. See [Cloudflare automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning).
+
+The initial MCP authorization may contain zero sites. Add the fixture's grant explicitly in the owner workspace after initial connection; revoking a site removes its existing agent grants, and reactivation requires explicit new authorization.

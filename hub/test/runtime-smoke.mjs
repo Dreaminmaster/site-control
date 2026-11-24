@@ -72,12 +72,17 @@ try{
  const params=new URLSearchParams({client_id:client.client_id,redirect_uri:redirectUri,response_type:"code",scope:"control:read control:propose",state:"local-smoke",code_challenge:challenge,code_challenge_method:"S256",resource:base+"/mcp"});
  const consent=await check(await req("/authorize?"+params,{headers:{Cookie:cookie}}),200,"OAuth consent");
  const nonce=(await consent.text()).match(/name='nonce' value='([a-f0-9]{64})'/)?.[1];assert.ok(nonce,"consent nonce");
- const approved=await check(await post("/authorize",{nonce,site:"smoke-b",write_site:"smoke-b",propose:"yes"}),303,"OAuth grant");
+ const approved=await check(await post("/authorize",{nonce,propose:"yes"}),303,"OAuth grant with no sites");
  const location=new URL(approved.headers.get("Location"));assert.equal(location.origin,new URL(redirectUri).origin);assert.equal(location.searchParams.get("state"),"local-smoke");
  const code=location.searchParams.get("code");assert.ok(code,"authorization code");
  const tokens=await check(await req("/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"authorization_code",client_id:client.client_id,redirect_uri:redirectUri,code,code_verifier:verifier,resource:base+"/mcp"})}),200,"OAuth token exchange");
  const credential=await tokens.json();assert.ok(credential.access_token);
  const rpc=async(method,params)=>{const r=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream","MCP-Protocol-Version":"2025-06-18"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});assert.equal(r.status,200,"MCP "+method);return r.json();};
+ const empty=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.deepEqual(JSON.parse(empty.result.content[0].text),[],"zero-site OAuth grant");
+ const ungranted=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-b"}});assert.equal(ungranted.result.isError,true);
+ const emptyGrantPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();
+ const emptyAgentId=findProposal(emptyGrantPage,"revoke-agent");
+ await check(await post("/admin/update-agent",[["id",emptyAgentId],["site","smoke-b"],["write_site","smoke-b"]]),303,"extend empty grant explicitly");
  const ls=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.ok(!ls.error&&!ls.result?.isError,"list authorized sites");assert.deepEqual(JSON.parse(ls.result.content[0].text).map(x=>x.id),["smoke-b"]);
  const denied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-a"}});assert.equal(denied.result.isError,true,"OAuth site isolation");
  const proposal=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-b",expected_revision:0,reason:"OAuth fixture proposal",config:{...config,title:"MCP proposed"}}});assert.equal(JSON.parse(proposal.result.content[0].text).status,"pending");
@@ -103,6 +108,12 @@ try{
  await check(await site("smoke-c",newTokenC,"heartbeat",{revision:0,config}),200,"rotated token works");
  console.log("PASS: add a later site to the same OAuth credential, per-site read-only protection, token rotation");
 
+ await check(await post("/admin/revoke-site",{id:"smoke-c"}),303,"revoke authorized site");
+ const reissue=await check(await post("/admin/rotate",{id:"smoke-c"}),200,"reconnect revoked site");
+ const reissuedToken=(await reissue.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(reissuedToken);
+ await check(await site("smoke-c",reissuedToken,"heartbeat",{revision:0,config}),200,"reconnected site reports");
+ const stillDenied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(stillDenied.result.isError,true,"site revocation removes prior agent grant");
+ console.log("PASS: OAuth connects with zero sites; explicit grants added later; site reactivation does not restore revoked AI access");
  await check(await post("/admin/revoke-agent",{id:agentId}),303,"revoke OAuth grant");
  const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");
  console.log("PASS: local OAuth dynamic registration, PKCE, consent, token exchange, actual MCP tool calls, scoped access and revocation");
