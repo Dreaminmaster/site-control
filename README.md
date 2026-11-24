@@ -6,6 +6,10 @@
 
 [简体中文](#简体中文) · [English](#english) · [Agent Skill](SKILL.md) · [Architecture](references/architecture.md)
 
+## Site Control Hub 2.0 (alpha preview)
+
+开发中的 [Hub 实现](hub/README.md) 和 [统一接入协议](references/hub-v2.md) 旨在通过一个 MCP + 独立网站令牌管理多个网站。当前源码尚未完成部署、安全审核、端到端 OAuth/MCP 验证；不能声称已接通任何现有站点。原 v1 规范仍然适用。
+
 ## 简体中文
 
 Site Control 是一套面向人类和 AI Agent 的网站开发与交付规范。它要求开发者不仅交付网站，还交付可独立维护的源码、管理入口、授权机制和恢复流程。适用于新建网站、升级现有网站及管理多个网站。

@@ -19,7 +19,7 @@ export function applyJob(local,job){
 }
 
 export function authorized(grant,site,mode,now){
-  return !!grant&&!grant.revoked&&grant.expires_at>now&&Array.isArray(grant.sites)&&grant.sites.includes(site)&&(mode==="read"||mode==="propose"&&grant.can_propose===true);
+  return !!grant&&!grant.revoked&&grant.expires_at>now&&Array.isArray(grant.sites)&&grant.sites.includes(site)&&(mode==="read"||mode==="propose"&&grant.can_propose===true&&Array.isArray(grant.writable_sites)&&grant.writable_sites.includes(site));
 }
 
 export function isFresh(checked,now){return Number.isFinite(checked)&&checked>0&&now>=checked&&now-checked<=900000;}

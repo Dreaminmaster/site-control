@@ -9,14 +9,12 @@
     {
       "binding": "DB",
       "database_name": "site-control-hub",
-      "database_id": "REPLACE_WITH_YOUR_D1_ID",
       "migrations_dir": "migrations"
     }
   ],
   "kv_namespaces": [
     {
-      "binding": "OAUTH_KV",
-      "id": "REPLACE_WITH_YOUR_KV_ID"
+      "binding": "OAUTH_KV"
     }
   ]
 }

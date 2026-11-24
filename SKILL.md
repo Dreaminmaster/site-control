@@ -25,6 +25,9 @@ Deliver a working website AND its maintainable control plane. The owner must be 
 
 Return actual implemented vs deferred features; site/project ID (non-secret), URL, repository/commit, admin URL, enabled tools and permission scopes, how the owner connects each agent, current version, test evidence, limits, cost/hosting trade-offs and rollback instructions. Include owner actions needed for installation, login, export, authorization, publish, or approval. Provide project-local site-control.manifest.json from `assets/manifest.example.json` with verified values, never credentials. Update docs as work changes. Use Chinese when requested.
 
+## v2 Hub integration (alpha; no live deployment assumed)
+For new persistent sites, prefer a registered Hub adapter over a separate plugin for each site **only after the Hub passes independent end-to-end verification**. Read `references/hub-v2.md` and `hub/README.md`. Preserve existing site admin, data, URL and auth. No deployment, real data access or migration is implied by the presence of the SDK. Never copy credentials into Git or bypass host privacy. If Hub or site transport is unavailable, keep existing site functionality and report the blocked connection.
+
 ## Platform rule: ChatGPT Sites
 
 Read `references/sites.md` for this host. Do not imply the original Codex session is the sole editor, or that third-party agents can control OpenAI platform APIs. Runtime app management is distinct from native Site editing and publishing. Maintain the same Site unless asked otherwise.

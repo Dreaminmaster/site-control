@@ -1,0 +1,29 @@
+name: Site Control Hub checks
+on:
+  pull_request:
+    paths:
+      - "hub/**"
+      - ".github/workflows/hub-check.yml"
+  push:
+    branches: [feature/site-control-hub-v2]
+permissions:
+  contents: read
+jobs:
+  core-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --ignore-scripts
+      - run: npm run check
+      - run: npx wrangler d1 migrations apply DB --local
+        env:
+          CI: "true"
+      - run: npm run build
+        env:
+          CI: "true"
