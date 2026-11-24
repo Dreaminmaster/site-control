@@ -16,16 +16,16 @@
 
 **验收阶段进度：2 / 8（25%）** · Delivery gates, not effort or ETA.
 
-`██░░░░░░`  基础实现、离线测试已通过；真实接口验收阻塞。  
-**当前阶段：** 修复并复验本地 Worker HTTP 运行测试。  
-**最近核验：** 2026-11-25（Australia/Sydney）；代码快照 `335804b`。
+`██░░░░░░`  基础实现、离线测试已通过；HTTP 修复待复验。  
+**当前阶段：** 已修复兼容日期、异步错误捕获和 OAuth 资源配置；新增安全加固，等待本地 HTTP 复验。  
+**最近核验：** 2026-11-25（Australia/Sydney）；代码快照 `b173dc9`。
 
 | 阶段 / Gate | 进度 | 验收依据 / 下一步 |
 | --- | --- | --- |
 | 01 基础架构与源码 | 🟢 已完成 | Hub、D1/KV 设计、SDK、后台及 MCP 基础工具已提交 |
 | 02 离线测试与构建 | 🟢 已通过 | [11 项测试、双数据库迁移及双 Worker dry-run 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45403865831) |
-| 03 HTTP 接口验收 | 🔴 阻塞 | [最新运行失败](https://github.com/Dreaminmaster/site-control/actions/runs/45404044472)：compatibility_date 超出运行环境支持日期，Worker 未启动；接口流程尚未通过 |
-| 04 安全与发布准备 | 🟡 未完成 | 限流、依赖锁定与审核、备份恢复、权限与在途撤销策略 |
+| 03 HTTP 接口验收 | 🟡 待复验 | [前一轮启动失败](https://github.com/Dreaminmaster/site-control/actions/runs/45406759022)：OAuth Provider 1.x 缺少 canonical resource；已提交修复，[本轮测试](https://github.com/Dreaminmaster/site-control/actions/runs/45407100579) |
+| 04 安全与发布准备 | 🟡 进行中 | 新增限流、请求体约束、数据库状态机约束、撤销再检查和过期状态清理；仍需复验、依赖锁定、安全审核、边缘防滥用及备份恢复 |
 | 05 Cloudflare 测试部署 | ⚪ 待授权 | 真实 Workers、D1/KV 绑定、服务端 Secrets |
 | 06 独立测试站接入 | ⚪ 待部署 | 真实站点注册、持久化、回执、撤销和回滚 |
 | 07 统一 OAuth / MCP | ⚪ 待验证 | 真实 GitHub 登录、独立 ChatGPT 会话调用、单次安装后新增站点 |
