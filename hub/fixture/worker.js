@@ -29,7 +29,8 @@ export function fixtureHandler(fetcher=fetch){
     if(u.pathname==="/admin/config"&&r.method==="POST"){
        const length=Number(r.headers.get("content-length")||0);if(length>4096)return json({error:"too_large"},413);
        // Fixture accepts compact owner requests only; production business adapters need streaming size limits.
-       const text=await r.text();if(text.length>4096)return json({error:"too_large"},413);
+       let text="",size=0;const reader=r.body?.getReader(),decoder=new TextDecoder();
+       if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){await reader.cancel();return json({error:"too_large"},413);}text+=decoder.decode(value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}}
        const b=JSON.parse(text),rev=checkRevision(b.expected_revision),current=await storage.read();
        if(rev!==current.revision)return json({error:"stale_revision"},409);
        const next={site_id:e.SITE_ID,revision:rev+1,config:validateConfig(b.config),last_job:null};

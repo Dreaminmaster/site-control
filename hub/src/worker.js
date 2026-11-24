@@ -11,7 +11,7 @@ const key=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toStrin
 const sha=async(s)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,"0")).join("");
 const esc=(s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const head={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"};
-const json=(obj,status=200)=>Response.json(obj,{status,headers:head});
+const json=(obj,status=200)=>Response.json(obj,{status,headers:{...head,...(status===429?{'Retry-After':'60'}:{})}});
 const html=(s,status=200)=>new Response('<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Site Control Hub</title><style>body{font:15px system-ui,sans-serif;background:#f6f7f4;color:#202c29;max-width:1000px;margin:0 auto;padding:24px}header{border-bottom:1px solid #cdd5d0;padding:8px 0 18px;margin-bottom:24px}h1{font-size:32px;letter-spacing:-1px}h2{margin-top:30px;font-size:20px}section,article{background:white;border:1px solid #dce2dd;border-radius:12px;padding:18px;margin:12px 0}input,select,button,textarea{font:inherit;padding:10px;border:1px solid #bac7be;border-radius:6px;max-width:100%;box-sizing:border-box}button{background:#245c50;color:white;cursor:pointer}label{display:block;margin:8px 0}form.inline{display:inline-block;margin:4px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f3f0;padding:10px}small{color:#52655c}a{color:#245c50}code{overflow-wrap:anywhere}.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.warn{color:#895a16}textarea{width:100%;min-height:100px}'+adminCss+'</style><body><header><small>OWNER WORKSPACE / V2 PREVIEW</small><h1>Site Control Hub</h1><a href="/admin">管理中心</a></header>'+s+'</body></html>',{status,headers:{...head,"Content-Type":"text/html; charset=utf-8"}});
 const err=(m,status=400)=>Object.assign(new Error(m),{status});
 const redirect=(location,cookie)=>new Response(null,{status:303,headers:{...head,Location:location,...(cookie?{"Set-Cookie":cookie}:{})}});
@@ -199,6 +199,20 @@ export default {async fetch(r,e,ctx){
       !(base.protocol==="https:"||base.protocol==="http:"&&["127.0.0.1","localhost","[::1]"].includes(base.hostname)))throw Error("invalid_origin");
  }catch{return json({error:"hub_origin_not_configured"},503);}
  if(new URL(r.url).origin!==base.origin)return json({error:"wrong_hub_origin"},421);
+ // Global bounded budgets protect the unauthenticated OAuth entry points without storing IP addresses.
+ // A platform edge rate limit is still required to protect D1 usage before requests reach this code.
+ const path=new URL(r.url).pathname;
+ const budgets={"/register":20,"/token":120,"/authorize":90,"/login":30,"/callback":60};
+ if(Object.hasOwn(budgets,path)){
+   try{
+     need(e);
+     if(r.method==="POST"){
+       const text=await limitedText(r);
+       r=new Request(r.url,{method:r.method,headers:r.headers,body:text});
+     }
+     await rate(e,"public:"+path,budgets[path]);
+   }catch(x){return json({error:x.status?x.message:"public_gate_failed"},x.status||503);}
+ }
  const provider=new OAuthProvider({apiRoute:"/mcp",apiHandler:mcp,defaultHandler:web,authorizeEndpoint:"/authorize",tokenEndpoint:"/token",clientRegistrationEndpoint:"/register",scopesSupported:["control:read","control:propose","offline_access"],requiredScopes:["control:read"],resourceMetadata:{resource:base.origin+"/mcp",authorization_servers:[base.origin],resource_name:"Site Control Hub"},accessTokenTTL:900,refreshTokenTTL:2592000});
  return provider.fetch(r,e,ctx);
 }};

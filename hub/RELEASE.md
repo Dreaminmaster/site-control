@@ -29,3 +29,7 @@ No automated production backups or scheduled synchronization are enabled by this
 ## Completion gate (before any existing-site onboarding)
 
 The platform may be independently usable with zero connected real websites. Report the live URL, current commit, real authentication and fixture tests, security review, and recovery drill. Stop at this boundary: **existing websites are opt-in**, and the owner must decide which, if any, will connect. Leaving websites completely independent is supported. Do not change existing site permissions, data, URLs or connectors.
+
+### Local recovery evidence
+
+`test/recovery-smoke.mjs` exports synthetic local D1 state, imports into a fresh temporary local persistence directory, checks full site configuration, proposal history and audit counts, then revokes all credentials and cancels outstanding changes in the restored copy. The original DB must remain unchanged. The procedure is not a production restore and never touches remote state. On actual disaster recovery, use a new database and new OAuth KV, rotate site tokens, then reauthorize each client deliberately.

@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import {spawn,execFileSync} from "node:child_process";
 import {createHash} from "node:crypto";
 import {setTimeout as pause} from "node:timers/promises";
+import {DatabaseSync} from "node:sqlite";
+import {mkdtempSync,readFileSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fixtureHandler} from "../fixture/worker.js";
 const wrangler="./node_modules/.bin/wrangler",base="http://127.0.0.1:8790",session="c".repeat(64);
 const hash=createHash("sha256").update(session).digest("hex");
 const sql="INSERT OR REPLACE INTO sessions(hash,owner_id,expires_at) VALUES('"+hash+"','fixture-owner',"+(Date.now()+600000)+");";
@@ -102,8 +107,51 @@ try{
  const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");
  console.log("PASS: local OAuth dynamic registration, PKCE, consent, token exchange, actual MCP tool calls, scoped access and revocation");
 
+
+ // Independent persistent fixture: run the real site handler and SDK against the running Hub.
+ // The injected fetcher only bridges the fake HTTPS test origin to local HTTP. No fake receipts.
+ const fixtureDir=mkdtempSync(join(tmpdir(),"sc-fixture-")),fixtureDb=join(fixtureDir,"fixture.sqlite");
+ let db=new DatabaseSync(fixtureDb);
+ const dbAdapter={prepare(sql){return {bind(...args){return {first:async()=>db.prepare(sql).get(...args)??null,run:async()=>({meta:{changes:Number(db.prepare(sql).run(...args).changes)}})}}}}};
+ try{
+   db.exec(readFileSync(new URL("../fixture/migrations/0001_init.sql",import.meta.url),"utf8"));
+   const reg=await check(await post("/admin/register",{id:"test-site",name:"Independent fixture",url:"https://fixture.invalid/"}),200,"register independent fixture");
+   const fixtureToken=(await reg.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(fixtureToken);
+   const handler=fixtureHandler(async(url,opts)=>{assert.equal(url.origin,"https://hub.invalid");return req(url.pathname,opts);});
+   const env={FIXTURE_DB:dbAdapter,SITE_ID:"test-site",HUB_URL:"https://hub.invalid/",SITE_TOKEN:fixtureToken,FIXTURE_ADMIN_TOKEN:"z".repeat(40)};
+   const siteReq=(path,method="GET",auth=true)=>handler.fetch(new Request("https://fixture.invalid"+path,{method,headers:auth?{Authorization:"Bearer "+env.FIXTURE_ADMIN_TOKEN}:{}}),env);
+   assert.equal((await siteReq("/admin","GET",false)).status,401);
+   await check(await siteReq("/admin/sync","POST"),200,"fixture reports independently");
+   const original=await (await siteReq("/admin")).json(),changed={...original.config,title:"Real fixture update"};
+   await check(await post("/admin/propose",{id:"test-site",revision:String(original.revision),reason:"Integrated fixture proposal",config:JSON.stringify(changed)}),303,"fixture proposal");
+   const html=await dashboard(),jobId=html.match(/action='\/admin\/approve'><input type='hidden' name='id' value='([^']+)'/g);assert.ok(jobId?.length);
+   // Other pending proposals can exist. Use the exact test site's proposal id from its card.
+   const card=html.split("<article").find(x=>x.includes("Integrated fixture proposal"));assert.ok(card);
+   const fid=findProposal(card,"approve");await check(await post("/admin/approve",{id:fid}),303,"approve integrated fixture");
+   await check(await siteReq("/admin/sync","POST"),200,"actual SDK commit and receipt");
+   db.close();db=new DatabaseSync(fixtureDb);
+   assert.equal((await (await siteReq("/admin")).json()).config.title,changed.title);
+   assert.match(await (await siteReq("/","GET",false)).text(),/Real fixture update/);
+   assert.match(await dashboard(),/已确认执行/);
+   await check(await post("/admin/rollback",{id:fid}),303,"create fixture rollback");
+   const restoreCard=(await dashboard()).split("<article").find(x=>x.includes("Restore previous values from "+fid));assert.ok(restoreCard);
+   await check(await post("/admin/approve",{id:findProposal(restoreCard,"approve")}),303,"approve fixture rollback");
+   await check(await siteReq("/admin/sync","POST"),200,"actual rollback sync");
+   const restored=await (await siteReq("/admin")).json();assert.deepEqual(restored.config,original.config);assert.equal(restored.revision,original.revision+2);
+   await check(await post("/admin/revoke-site",{id:"test-site"}),303,"revoke fixture");
+   assert.equal((await siteReq("/admin/sync","POST")).status,500);
+   assert.equal((await (await siteReq("/admin")).json()).revision,restored.revision);
+   console.log("PASS: independent fixture handler, on-disk SQLite, actual SDK and Hub HTTP, restart persistence, approved change, rollback and revocation");
+ }finally{db.close();rmSync(fixtureDir,{recursive:true,force:true});}
+
  await check(await post("/logout",{}),303,"owner logout");
  await check(await post("/admin/register",{id:"after-logout",name:"Denied",url:"https://example.invalid/"}),401,"session revoked at logout");
+ // Unauthenticated request bodies are bounded before the OAuth provider parses them.
+ await check(await req("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:"x".repeat(33000)}),413,"public body limit");
+ // Exhaust only the synthetic login endpoint; fixed-window edge protection is separate.
+ let limited=false;for(let i=0;i<35;i++){const q=await req("/login");if(q.status===429){assert.equal(q.headers.get("Retry-After"),"60");limited=true;break;}}
+ assert.ok(limited,"public login budget");
+ console.log("PASS: public OAuth request limits and global login budget");
  console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");
 }catch(e){console.error("Runtime smoke failed:",e.message);console.error(logs.replace(/Bearer [a-f0-9]{64}/g,"Bearer [redacted]"));process.exitCode=1;}
 finally{p.kill("SIGTERM");}

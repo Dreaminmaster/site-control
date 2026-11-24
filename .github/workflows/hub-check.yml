@@ -29,6 +29,9 @@ jobs:
       - run: node test/runtime-smoke.mjs
         env:
           CI: "true"
+      - run: node test/recovery-smoke.mjs
+        env:
+          CI: "true"
       - run: npm run build
         env:
           CI: "true"
