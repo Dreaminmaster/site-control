@@ -6,9 +6,53 @@
 
 [简体中文](#简体中文) · [English](#english) · [Agent Skill](SKILL.md) · [Architecture](references/architecture.md)
 
-## Site Control Hub 2.0 (alpha preview)
+<!-- HUB-PROGRESS:BEGIN -->
+## 🚧 Site Control Hub 2.0 · 开发进度 / Roadmap
 
-开发中的 [Hub 实现](hub/README.md) 和 [统一接入协议](references/hub-v2.md) 旨在通过一个 MCP + 独立网站令牌管理多个网站。当前源码尚未完成部署、安全审核、端到端 OAuth/MCP 验证；不能声称已接通任何现有站点。原 v1 规范仍然适用。
+[![Stage](https://img.shields.io/badge/Hub-2.0%20Alpha-orange)](https://github.com/Dreaminmaster/site-control/pull/1)
+[![Build](https://github.com/Dreaminmaster/site-control/actions/workflows/hub-check.yml/badge.svg?branch=feature%2Fsite-control-hub-v2)](https://github.com/Dreaminmaster/site-control/actions?query=branch%3Afeature%2Fsite-control-hub-v2)
+![Deployment](https://img.shields.io/badge/Deployment-not%20deployed-lightgrey)
+![Migration](https://img.shields.io/badge/Migration-not%20started-lightgrey)
+
+**验收阶段进度：2 / 8（25%）** · Delivery gates, not effort or ETA.
+
+`██░░░░░░`  基础实现、离线测试已通过；真实接口验收阻塞。  
+**当前阶段：** 修复并复验本地 Worker HTTP 运行测试。  
+**最近核验：** 2026-11-25（Australia/Sydney）；代码快照 `335804b`。
+
+| 阶段 / Gate | 进度 | 验收依据 / 下一步 |
+| --- | --- | --- |
+| 01 基础架构与源码 | 🟢 已完成 | Hub、D1/KV 设计、SDK、后台及 MCP 基础工具已提交 |
+| 02 离线测试与构建 | 🟢 已通过 | [11 项测试、双数据库迁移及双 Worker dry-run 构建](https://github.com/Dreaminmaster/site-control/actions/runs/45403865831) |
+| 03 HTTP 接口验收 | 🔴 阻塞 | [最新运行失败](https://github.com/Dreaminmaster/site-control/actions/runs/45404044472)：compatibility_date 超出运行环境支持日期，Worker 未启动；接口流程尚未通过 |
+| 04 安全与发布准备 | 🟡 未完成 | 限流、依赖锁定与审核、备份恢复、权限与在途撤销策略 |
+| 05 Cloudflare 测试部署 | ⚪ 待授权 | 真实 Workers、D1/KV 绑定、服务端 Secrets |
+| 06 独立测试站接入 | ⚪ 待部署 | 真实站点注册、持久化、回执、撤销和回滚 |
+| 07 统一 OAuth / MCP | ⚪ 待验证 | 真实 GitHub 登录、独立 ChatGPT 会话调用、单次安装后新增站点 |
+| 08 现有站点接入 | ⚪ 未开始 | 逐站只读验收、业务适配、安全审核后接入，保留原站 |
+
+<details>
+<summary>展开功能进度 / Feature checklist</summary>
+
+| 功能 | 实现 | 真实环境验收 |
+| --- | --- | --- |
+| GitHub 所有者登录 | 🟢 | ⚪ |
+| 站点注册、独立令牌、轮换与撤销 | 🟢 | ⚪ |
+| MCP 四个基础工具与逐站读/提案权限 | 🟢 | ⚪ |
+| 审批、版本检查、审计、恢复提案 | 🟢 | ⚪ |
+| 服务端 SDK 与独立测试站 | 🟢 | ⚪ |
+| 业务数据适配与平台兼容验证 | ⚪ | ⚪ |
+| 正式部署、独立会话接管 | ⚪ | ⚪ |
+
+🟢 已实现或已通过所列验收；🟡 进行中；🔴 阻塞；⚪ 未完成。代码存在不等于服务已上线。
+
+</details>
+
+**开发入口：** [草稿 PR #1](https://github.com/Dreaminmaster/site-control/pull/1) · [开发分支](https://github.com/Dreaminmaster/site-control/tree/feature/site-control-hub-v2) · [Hub 源码与部署说明](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/hub/README.md) · [接入规范](https://github.com/Dreaminmaster/site-control/blob/feature/site-control-hub-v2/references/hub-v2.md)
+
+> **维护规则：** 在 2.0 完成之前保留本区块。每次有实质性开发、测试、部署或接入进展，维护者同时更新默认分支与开发分支的 README，记录核验日期、证据链接、阻塞和下一步；仅通过明确验收门槛的阶段计入进度。构建徽章自动反映 CI，阶段进度由维护者根据验收证据更新。全部验收通过并正式发布后，可替换为稳定版状态与发布记录。公开 README 不得包含私人站点地址、个人数据或密钥。
+
+<!-- HUB-PROGRESS:END -->
 
 ## 简体中文
 
