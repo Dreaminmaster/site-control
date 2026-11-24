@@ -83,10 +83,27 @@ try{
  await check(await post("/admin/approve",{id:changeId}),303,"approve resource change");const resourceJob=(await (await site("smoke-b",tokenB,"poll",{})).json()).job;assert.deepEqual(resourceJob.config.resources.policies,updated);assert.equal(resourceJob.config.title,config.title);
  await check(await site("smoke-b",tokenB,"ack",{id:changeId,ok:true,revision:1,config:resourceJob.config}),200,"resource receipt");const after=await rpc("tools/call",{name:"read_site_resource",arguments:{site_id:"smoke-b",resource_id:"policies"}});assert.deepEqual(JSON.parse(after.result.content[0].text).records,updated);
  const agentPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();const agentId=findProposal(agentPage,"revoke-agent");
+ // A site created AFTER initial OAuth issuance must be addable to the SAME credential.
+ const regC=await check(await post("/admin/register",{id:"smoke-c",name:"Fixture C",url:"https://example.invalid/"}),200,"register later site");
+ const tokenC=(await regC.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenC);
+ await check(await site("smoke-c",tokenC,"heartbeat",{revision:0,config}),200,"later site first heartbeat");
+ const deniedC=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(deniedC.result.isError,true);
+ await check(await post("/admin/update-agent",[["id",agentId],["site","smoke-b"],["site","smoke-c"],["write_site","smoke-b"]]),303,"extend existing grant");
+ const newList=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.deepEqual(JSON.parse(newList.result.content[0].text).map(x=>x.id).sort(),["smoke-b","smoke-c"]);
+ const readC=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-c"}});assert.equal(JSON.parse(readC.result.content[0].text).id,"smoke-c");
+ const noWriteC=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-c",expected_revision:0,reason:"Read-only grant must deny",config:{...config,title:"Forbidden"}}});assert.equal(noWriteC.result.isError,true);
+ const rotateC=await check(await post("/admin/rotate",{id:"smoke-c"}),200,"rotate new site token");
+ const newTokenC=(await rotateC.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(newTokenC);assert.notEqual(newTokenC,tokenC);
+ await check(await site("smoke-c",tokenC,"poll",{}),401,"old token rejected");
+ await check(await site("smoke-c",newTokenC,"heartbeat",{revision:0,config}),200,"rotated token works");
+ console.log("PASS: add a later site to the same OAuth credential, per-site read-only protection, token rotation");
+
  await check(await post("/admin/revoke-agent",{id:agentId}),303,"revoke OAuth grant");
  const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");
  console.log("PASS: local OAuth dynamic registration, PKCE, consent, token exchange, actual MCP tool calls, scoped access and revocation");
 
+ await check(await post("/logout",{}),303,"owner logout");
+ await check(await post("/admin/register",{id:"after-logout",name:"Denied",url:"https://example.invalid/"}),401,"session revoked at logout");
  console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");
 }catch(e){console.error("Runtime smoke failed:",e.message);console.error(logs.replace(/Bearer [a-f0-9]{64}/g,"Bearer [redacted]"));process.exitCode=1;}
 finally{p.kill("SIGTERM");}
