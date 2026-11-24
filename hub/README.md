@@ -59,3 +59,5 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 新增隔离联调：真实 Hub HTTP + 独立 fixture handler/SDK + 磁盘 SQLite，重启后核对持久化及回滚。新增 Wrangler D1 本地导出/导入恢复演练；恢复副本默认撤销授权、取消未完成变更、保留原库。公开 OAuth 路径加入固定窗口全局限流及前置请求体限制；此方案仍需云端边缘防滥用与真实部署验收。
 
 `npm run prepare:staging -- sc-test-<unique-name>` 可生成独立测试环境配置（仅本地，不自动部署），避免沿用现有资源 ID、路由或环境变量。撤销站点会同时取消未完成提案，重新轮换令牌不能重新激活旧任务；已被领取的在途命令仍需人工核对实际站点版本。
+
+真实浏览器验收加入 CI：Chromium 桌面 1440×900 与手机 390×844，5 个后台页面、文档横向溢出检查及真实搜索表单提交；截图只包含合成站点和测试数据，作为 CI 工件保存。待本轮 CI 复验。

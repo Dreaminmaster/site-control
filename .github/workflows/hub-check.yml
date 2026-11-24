@@ -32,6 +32,15 @@ jobs:
       - run: node test/recovery-smoke.mjs
         env:
           CI: "true"
+      - name: Real browser acceptance (synthetic data only)
+        run: node test/browser-smoke.mjs
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hub-browser-evidence
+          path: hub/browser-evidence/*.png
+          retention-days: 7
       - run: npm run build
         env:
           CI: "true"
