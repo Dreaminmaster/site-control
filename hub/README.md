@@ -47,3 +47,9 @@ Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIG
 ## 独立发布门槛
 
 [发布与恢复操作手册](RELEASE.md) 将隔离部署、真实登录、测试站、OAuth、恢复演练与现有网站接入明确分开。平台允许零个真实站点；现有网站是否接入由所有者另行选择。接入不是平台完成的前提。
+
+## 通用资源集合（试验版，待回归测试）
+
+注册站点时所有者可明确声明最多4个非敏感小型记录集合（最多25条/集合，整个快照最多8KB），字段限定文本、布尔、数字、HTTPS URL；禁止任意对象、脚本、数据库查询或任意网络访问。定义注册后固定，站点 SDK 使用相同 `resourceSchema`，先验证定义，再执行获批的版本化变更。新增统一 MCP 工具 `list_site_capabilities`、`read_site_resource`、`propose_site_resource_change`。现有基础工具保留；新增工具不要求每个网站独立安装 MCP。授权仍按站点隔离，资源只能是已获批准的非敏感数据；这不是任意业务数据库接口，不能接入私密文件和个人身份记录。
+
+示例：`[{"id":"policies","label":"Public policies","max_records":10,"fields":[{"name":"headline","type":"text"},{"name":"verified","type":"boolean"}]}]`。每条记录必须有独立 `id`；站点快照在 `resources.policies` 中保存这些字段。SDK 适配需要真实持久化、领域校验及主机权限支持。

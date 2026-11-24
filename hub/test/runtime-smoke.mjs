@@ -22,7 +22,8 @@ try{
  await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"},true,false),403,"CSRF origin rejection");
  const regA=await check(await post("/admin/register",{id:"smoke-a",name:"Fixture A",url:"https://example.invalid/"}),200,"register site A");
  const tokenA=(await regA.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenA);
- const regB=await check(await post("/admin/register",{id:"smoke-b",name:"Fixture B",url:"https://example.invalid/"}),200,"register site B");
+ const resourceSchema=[{id:"policies",label:"Public policies",fields:[{name:"headline",type:"text"},{name:"verified",type:"boolean"}],max_records:10}];
+ const regB=await check(await post("/admin/register",{id:"smoke-b",name:"Fixture B",url:"https://example.invalid/",resource_schema:JSON.stringify(resourceSchema),resource_safe:"yes"}),200,"register site B");
  const tokenB=(await regB.text()).match(/SITE_TOKEN=([a-f0-9]{64})/)?.[1];assert.ok(tokenB);assert.notEqual(tokenA,tokenB);
  const config={title:"Initial",notice:"Synthetic fixture",maintenance:false},next={...config,title:"Approved change"};
  await check(await site("smoke-b",tokenA,"poll",{}),401,"cross-site token denial");
@@ -50,7 +51,9 @@ try{
  await check(await site("smoke-a",tokenA,"ack",{id:rollbackId,ok:true,revision:2,config}),200,"rollback receipt");
  await check(await post("/admin/revoke-site",{id:"smoke-a"}),303,"revoke site");
  await check(await site("smoke-a",tokenA,"poll",{}),404,"revoked token rejected");
- await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config}),200,"other site unaffected");
+ const resourceConfig={...config,resources:{policies:[{id:"p1",headline:"Synthetic public record",verified:false}]}};
+ await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config:resourceConfig}),409,"schema mismatch rejected");
+ await check(await site("smoke-b",tokenB,"heartbeat",{revision:0,config:resourceConfig,resource_schema:resourceSchema}),200,"other site unaffected");
  await check(await post("/admin/cleanup",{}),303,"owner-only ephemeral cleanup");
  const mcp=await req("/mcp",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"fixture",version:"1"}}})});
  assert.equal(mcp.status,401,"unauthenticated MCP denied");
@@ -73,6 +76,12 @@ try{
  const ls=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.ok(!ls.error&&!ls.result?.isError,"list authorized sites");assert.deepEqual(JSON.parse(ls.result.content[0].text).map(x=>x.id),["smoke-b"]);
  const denied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-a"}});assert.equal(denied.result.isError,true,"OAuth site isolation");
  const proposal=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-b",expected_revision:0,reason:"OAuth fixture proposal",config:{...config,title:"MCP proposed"}}});assert.equal(JSON.parse(proposal.result.content[0].text).status,"pending");
+ const capabilities=await rpc("tools/call",{name:"list_site_capabilities",arguments:{site_id:"smoke-b"}});assert.deepEqual(JSON.parse(capabilities.result.content[0].text).resources,resourceSchema);
+ const data=await rpc("tools/call",{name:"read_site_resource",arguments:{site_id:"smoke-b",resource_id:"policies"}});assert.equal(JSON.parse(data.result.content[0].text).records[0].headline,"Synthetic public record");
+ const bad=await rpc("tools/call",{name:"propose_site_resource_change",arguments:{site_id:"smoke-b",resource_id:"policies",expected_revision:0,records_json:JSON.stringify([{id:"p2",headline:"Invalid",verified:"yes"}]),reason:"Invalid fixture"}});assert.equal(bad.result.isError,true);
+ const updated=[{id:"p1",headline:"Updated public record",verified:true}];const change=await rpc("tools/call",{name:"propose_site_resource_change",arguments:{site_id:"smoke-b",resource_id:"policies",expected_revision:0,records_json:JSON.stringify(updated),reason:"Update public record"}});const changeId=JSON.parse(change.result.content[0].text).id;assert.ok(changeId);
+ await check(await post("/admin/approve",{id:changeId}),303,"approve resource change");const resourceJob=(await (await site("smoke-b",tokenB,"poll",{})).json()).job;assert.deepEqual(resourceJob.config.resources.policies,updated);assert.equal(resourceJob.config.title,config.title);
+ await check(await site("smoke-b",tokenB,"ack",{id:changeId,ok:true,revision:1,config:resourceJob.config}),200,"resource receipt");const after=await rpc("tools/call",{name:"read_site_resource",arguments:{site_id:"smoke-b",resource_id:"policies"}});assert.deepEqual(JSON.parse(after.result.content[0].text).records,updated);
  const agentPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();const agentId=findProposal(agentPage,"revoke-agent");
  await check(await post("/admin/revoke-agent",{id:agentId}),303,"revoke OAuth grant");
  const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");

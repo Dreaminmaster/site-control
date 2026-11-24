@@ -2,7 +2,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
-import {validateConfig,validateSiteId,checkRevision,authorized,isFresh} from "./core.js";
+import {validateConfig,validateResourceSchema,validateSiteId,checkRevision,authorized,isFresh} from "./core.js";
 import {adminView,adminCss} from "./admin-ui.js";
 
 const MAX=16384;
@@ -41,15 +41,16 @@ async function form(r){origin(r);if(!r.headers.get("Content-Type")?.startsWith("
 async function session(r,e){const raw=cookie(r,S);if(!/^[a-f0-9]{64}$/.test(raw))return null;const hash=await sha(raw);const x=await first(e,"SELECT * FROM sessions WHERE hash=? AND expires_at>?",hash,t());return x&&x.owner_id===String(e.OWNER_GITHUB_ID)?x:null;}
 async function owner(r,e){const s=await session(r,e);if(!s)throw err("login_required",401);return s;}
 function secureUrl(x){let u;try{u=new URL(x)}catch{throw err("invalid_url")}if(u.protocol!=="https:"||u.username||u.password||u.search||u.hash||x.length>500)throw err("invalid_url");return u.href;}
-function normConfig(x){try{return JSON.stringify(validateConfig(x))}catch{throw err("invalid_config")}}
-function cleanSite(x){return {id:x.id,name:x.name,url:x.url,revision:x.revision,config:x.config?JSON.parse(x.config):null,last_seen:x.last_seen,status:x.revoked?"revoked":x.expires_at<=t()?"expired":isFresh(x.last_seen,t())?"connected":"not_recently_seen"}}
+function schemaOf(s){return validateResourceSchema(JSON.parse(s.resource_schema||"[]"))}
+function normConfig(x,schema=[]){try{return JSON.stringify(validateConfig(x,schema))}catch{throw err("invalid_config")}}
+function cleanSite(x,full=false){const config=x.config?JSON.parse(x.config):null;const safeConfig=config&&{title:config.title,notice:config.notice,maintenance:config.maintenance};return {id:x.id,name:x.name,url:x.url,revision:x.revision,resource_schema:schemaOf(x),config:full?config:safeConfig,last_seen:x.last_seen,status:x.revoked?"revoked":x.expires_at<=t()?"expired":isFresh(x.last_seen,t())?"connected":"not_recently_seen"}}
 async function activeSite(e,id){try{validateSiteId(id)}catch{throw err("invalid_site_id")}const s=await first(e,"SELECT * FROM sites WHERE id=?",id);if(!s||s.revoked||s.expires_at<=t())throw err("site_unavailable",404);return s;}
 async function siteAuth(r,e,id){const s=await activeSite(e,id);const h=r.headers.get("authorization")||"";if(!/^Bearer [a-f0-9]{64}$/.test(h)||await sha(h.slice(7))!==s.token_hash)throw err("site_auth_denied",401);return s;}
 async function grant(e,id,site,mode){const row=await first(e,"SELECT * FROM agents WHERE id=?",id);if(!row)throw err("agent_denied",403);const g={...row,sites:JSON.parse(row.sites),writable_sites:JSON.parse(row.writable_sites),can_propose:row.can_propose===1};if(site&&!authorized(g,site,mode,t())||!site&&(g.revoked||g.expires_at<=t()))throw err("agent_denied",403);return g;}
 async function propose(e,site,actor,expected,config,reason){
  const s=await activeSite(e,site);try{checkRevision(expected)}catch{throw err("invalid_revision")};if(s.revision!==expected||!s.config)throw err("stale_or_uninitialized",409);
  if(typeof reason!=="string"||!reason.trim()||reason.length>500)throw err("invalid_reason");
- const next=normConfig(config);if(next===s.config)throw err("no_change");const id=crypto.randomUUID();
+ const next=normConfig(config,schemaOf(s));if(next===s.config)throw err("no_change");const id=crypto.randomUUID();
  const guard=actor.startsWith("agent:")?" AND EXISTS(SELECT 1 FROM agents a WHERE a.id=? AND a.revoked=0 AND a.expires_at>? AND a.can_propose=1 AND EXISTS(SELECT 1 FROM json_each(a.sites) WHERE value=sites.id) AND EXISTS(SELECT 1 FROM json_each(a.writable_sites) WHERE value=sites.id))":"";
  const args=actor.startsWith("agent:")?[actor.slice(6),t()]:[];
  const result=await first(e,"INSERT INTO proposals(id,site_id,actor,reason,expected_revision,before_config,config,status,created_at,updated_at) SELECT ?,id,?,?,revision,config,?,'pending',?,? FROM sites WHERE id=? AND revision=? AND revoked=0 AND expires_at>?"+guard+" RETURNING id",id,actor,reason.trim(),next,t(),t(),site,expected,t(),...args);
@@ -106,13 +107,13 @@ async function dashboard(e,r){
  first(e,"SELECT (SELECT count(*) FROM sites) AS site_count,(SELECT count(*) FROM sites WHERE revoked=0 AND expires_at>? AND last_seen>=? AND last_seen<=?) AS connected,(SELECT count(*) FROM proposals WHERE status='pending') AS pending,(SELECT count(*) FROM agents WHERE revoked=0 AND expires_at>?) AS active_agents",t(),t()-900000,t(),t())
  ]);
  const u=new URL(r.url);
- return html(adminView({page:u.searchParams.get("view")||"overview",query:(u.searchParams.get("q")||"").slice(0,100),sites:siteRows.map(x=>({...cleanSite(x),expires_at:x.expires_at})),proposals:props,agents,audit,metrics}));
+ return html(adminView({page:u.searchParams.get("view")||"overview",query:(u.searchParams.get("q")||"").slice(0,100),sites:siteRows.map(x=>({...cleanSite(x,true),expires_at:x.expires_at})),proposals:props,agents,audit,metrics}));
 }
 async function adminWrite(r,e,action){
  const admin=await owner(r,e);const f=await form(r),id=String(f.get("id")||"");await rate(e,"owner:"+admin.owner_id,120);
  if(action==="register"||action==="rotate"){
    validateSiteId(id);const token=key(),hash=await sha(token),expiry=t()+7776000000;
-   if(action==="register"){const name=String(f.get("name")||"").trim();if(!name||name.length>100)throw err("invalid_name");const url=secureUrl(String(f.get("url")||""));await run(e,"INSERT INTO sites(id,name,url,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?)",id,name,url,hash,expiry,t());}
+   if(action==="register"){const name=String(f.get("name")||"").trim();if(!name||name.length>100)throw err("invalid_name");const url=secureUrl(String(f.get("url")||""));let schema;try{schema=validateResourceSchema(JSON.parse(String(f.get("resource_schema")||"[]")))}catch{throw err("invalid_resource_schema")};if(schema.length&&f.get("resource_safe")!=="yes")throw err("resource_confirmation_required");await run(e,"INSERT INTO sites(id,name,url,token_hash,expires_at,created_at,resource_schema) VALUES(?,?,?,?,?,?,?)",id,name,url,hash,expiry,t(),JSON.stringify(schema));}
    else{const v=await first(e,"UPDATE sites SET token_hash=?,expires_at=?,revoked=0,last_seen=NULL WHERE id=? RETURNING id",hash,expiry,id);if(!v)throw err("not_found",404);}
    return html("<h2>网站连接令牌 · 仅此一次</h2><p>将以下值放进网站服务端 Secret，切勿放到浏览器或 Git。</p><pre>"+esc("SITE_ID="+id+"\nHUB_URL="+new URL(r.url).origin+"\nSITE_TOKEN="+token)+"</pre><p>90天有效。关闭页面后不能重新读取，丢失可轮换。</p><a href='/admin'>返回</a>");
  }
@@ -137,18 +138,18 @@ async function siteApi(r,e,id,action){
  if(r.method!=="POST")throw err("method_denied",405);
  const s=await siteAuth(r,e,id),b=await body(r);await rate(e,"site:"+id,120);
  if(action==="heartbeat"){
-   let rev;try{rev=checkRevision(b.revision)}catch{throw err("invalid_revision")};const config=normConfig(b.config);
+   let rev;try{rev=checkRevision(b.revision)}catch{throw err("invalid_revision")};const schema=schemaOf(s);if(schema.length&&JSON.stringify(b.resource_schema)!==JSON.stringify(schema))throw err("resource_schema_mismatch",409);const config=normConfig(b.config,schema);
    if(rev<s.revision||rev===s.revision&&s.config!==config)throw err("revision_conflict",409);
    const v=await first(e,"UPDATE sites SET revision=?,config=?,last_seen=? WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=? AND (?=revision OR NOT EXISTS(SELECT 1 FROM proposals WHERE site_id=? AND status='approved')) RETURNING id",rev,config,t(),id,s.token_hash,t(),s.revision,rev,id);
    if(!v)throw err("pending_job_or_conflict",409);return json({ok:true,revision:rev});
  }
- if(action==="poll"){const p=await first(e,"SELECT p.id,p.site_id,p.expected_revision,p.config,p.status FROM proposals p JOIN sites s ON s.id=p.site_id WHERE p.site_id=? AND p.status='approved' AND s.token_hash=? AND s.revoked=0 AND s.expires_at>?",id,s.token_hash,t());return json({job:p?{...p,config:JSON.parse(p.config)}:null});}
+ if(action==="poll"){const p=await first(e,"SELECT p.id,p.site_id,p.expected_revision,p.config,p.status FROM proposals p JOIN sites s ON s.id=p.site_id WHERE p.site_id=? AND p.status='approved' AND s.token_hash=? AND s.revoked=0 AND s.expires_at>?",id,s.token_hash,t());return json({resource_schema:schemaOf(s),job:p?{...p,config:JSON.parse(p.config)}:null});}
  if(action==="ack"){
    const p=await first(e,"SELECT * FROM proposals WHERE id=? AND site_id=?",String(b.id||""),id);if(!p)throw err("unknown_job",404);
-   if(p.status==="applied"&&b.ok===true&&b.revision===p.expected_revision+1&&normConfig(b.config)===p.config)return json({ok:true,replayed:true});
+   if(p.status==="applied"&&b.ok===true&&b.revision===p.expected_revision+1&&normConfig(b.config,schemaOf(s))===p.config)return json({ok:true,replayed:true});
    if(p.status!=="approved")throw err("job_not_approved",409);
    if(typeof b.ok!=="boolean")throw err("invalid_ack");
-   if(b.ok===true&&(b.revision!==p.expected_revision+1||normConfig(b.config)!==p.config))throw err("bad_receipt",409);
+   if(b.ok===true&&(b.revision!==p.expected_revision+1||normConfig(b.config,schemaOf(s))!==p.config))throw err("bad_receipt",409);
    const v=await first(e,"UPDATE proposals SET status=?,updated_at=? WHERE id=? AND site_id=? AND status='approved' AND EXISTS(SELECT 1 FROM sites WHERE id=? AND token_hash=? AND revoked=0 AND expires_at>? AND revision=?) RETURNING id",b.ok?"applied":"failed",t(),p.id,id,id,s.token_hash,t(),p.expected_revision);if(!v)throw err("ack_conflict",409);return json({ok:true,status:b.ok?"applied":"failed"});
  }
  throw err("not_found",404);
@@ -179,7 +180,11 @@ const mcp={async fetch(r,e,ctx){
    server.registerTool("list_sites",{description:"List only the websites explicitly authorized by the owner. Configuration is non-sensitive and reported by the site, not a live fetch.",inputSchema:{},annotations:{readOnlyHint:true}},async()=>{try{const g=await grant(e,agentId,null,"read");const result=[];for(const id of g.sites){const row=await first(e,"SELECT * FROM sites WHERE id=?",id);if(row&&!row.revoked&&row.expires_at>t())result.push(cleanSite(row));}return out(result);}catch{return {isError:true,...out({error:"access_denied"})}}});
    server.registerTool("get_site_status",{description:"Read the latest authenticated heartbeat and configuration for one authorized website.",inputSchema:{site_id:z.string().max(48)},annotations:{readOnlyHint:true}},async({site_id})=>{try{await grant(e,agentId,site_id,"read");return out(cleanSite(await activeSite(e,site_id)));}catch{return {isError:true,...out({error:"access_denied_or_unavailable"})}}});
    server.registerTool("list_site_changes",{description:"Read bounded proposal history for one authorized site.",inputSchema:{site_id:z.string().max(48)},annotations:{readOnlyHint:true}},async({site_id})=>{try{await grant(e,agentId,site_id,"read");await activeSite(e,site_id);return out(await rows(e,"SELECT id,site_id,reason,expected_revision,status,created_at,updated_at FROM proposals WHERE site_id=? ORDER BY created_at DESC LIMIT 50",site_id));}catch{return {isError:true,...out({error:"access_denied_or_unavailable"})}}});
-   server.registerTool("propose_site_change",{description:"Create a pending configuration proposal; cannot approve, apply, run code, change permissions or access private documents.",inputSchema:{site_id:z.string().max(48),expected_revision:z.number().int().nonnegative(),config:z.object({title:z.string().min(1).max(100),notice:z.string().max(1000),maintenance:z.boolean()}).strict(),reason:z.string().min(1).max(500)},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}},async(a)=>{try{if(!scopes.includes("control:propose"))throw err("write_scope_required",403);await grant(e,agentId,a.site_id,"propose");return out(await propose(e,a.site_id,"agent:"+agentId,a.expected_revision,a.config,a.reason));}catch(x){return {isError:true,...out({error:x.status?x.message:"proposal_failed"})}}});
+   server.registerTool("propose_site_change",{description:"Create a pending configuration proposal; cannot approve, apply, run code, change permissions or access private documents.",inputSchema:{site_id:z.string().max(48),expected_revision:z.number().int().nonnegative(),config:z.object({title:z.string().min(1).max(100),notice:z.string().max(1000),maintenance:z.boolean()}).strict(),reason:z.string().min(1).max(500)},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}},async(a)=>{try{if(!scopes.includes("control:propose"))throw err("write_scope_required",403);await grant(e,agentId,a.site_id,"propose");const s=await activeSite(e,a.site_id),old=s.config?JSON.parse(s.config):null;const next=schemaOf(s).length&&old?{...a.config,resources:old.resources}:a.config;return out(await propose(e,a.site_id,"agent:"+agentId,a.expected_revision,next,a.reason));}catch(x){return {isError:true,...out({error:x.status?x.message:"proposal_failed"})}}});
+
+   server.registerTool("list_site_capabilities",{description:"Discover the immutable, owner-approved public resource collection schemas for an authorized site.",inputSchema:{site_id:z.string().max(48)},annotations:{readOnlyHint:true}},async({site_id})=>{try{await grant(e,agentId,site_id,"read");const s=await activeSite(e,site_id);return out({site_id,revision:s.revision,resources:schemaOf(s),initialized:!!s.config});}catch{return {isError:true,...out({error:"access_denied_or_unavailable"})}}});
+   server.registerTool("read_site_resource",{description:"Read one approved public resource collection from the last reported snapshot, not a live search.",inputSchema:{site_id:z.string().max(48),resource_id:z.string().max(32)},annotations:{readOnlyHint:true}},async({site_id,resource_id})=>{try{await grant(e,agentId,site_id,"read");const s=await activeSite(e,site_id);if(!s.config||!schemaOf(s).some(x=>x.id===resource_id))throw err("resource_unavailable",404);return out({site_id,resource_id,revision:s.revision,records:JSON.parse(s.config).resources[resource_id]});}catch{return {isError:true,...out({error:"access_denied_or_unavailable"})}}});
+   server.registerTool("propose_site_resource_change",{description:"Propose replacing one declared, non-sensitive resource collection with validated JSON records. The owner must approve and the website must confirm persistent application.",inputSchema:{site_id:z.string().max(48),resource_id:z.string().max(32),expected_revision:z.number().int().nonnegative(),records_json:z.string().max(8000),reason:z.string().min(1).max(500)},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}},async(a)=>{try{if(!scopes.includes("control:propose"))throw err("write_scope_required",403);await grant(e,agentId,a.site_id,"propose");const s=await activeSite(e,a.site_id);if(!s.config||!schemaOf(s).some(x=>x.id===a.resource_id))throw err("resource_unavailable",404);let data;try{data=JSON.parse(a.records_json)}catch{throw err("invalid_json")};const config=JSON.parse(s.config);config.resources[a.resource_id]=data;return out(await propose(e,a.site_id,"agent:"+agentId,a.expected_revision,config,a.reason));}catch(x){return {isError:true,...out({error:x.status?x.message:"proposal_failed"})}}});
    const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});await server.connect(transport);
    const bounded=r.method==="POST"?new Request(r.url,{method:r.method,headers:r.headers,body:await limitedText(r)}):r;
    return await transport.handleRequest(bounded);
