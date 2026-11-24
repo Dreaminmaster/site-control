@@ -39,3 +39,7 @@ POST /api/sites/{site_id}/heartbeat | poll | ack，Authorization: Bearer <site t
 新增数据库迁移 0002：合法提案状态转换、版本与撤销检查；已认证站点/管理员/AI 主体每分钟 120 次固定窗口限流；管理员可手动清理过期会话、登录/授权流程及旧限流计数（不删除审计和业务数据）；MCP 请求体限制与站点轮询凭证再验证。该限流不覆盖 OAuth Provider 内部公开注册/令牌端点，正式上线前仍需平台边缘防滥用策略、安全审查和备份演练。已领取的命令不能因撤销而保证撤回。没有设置后台定时任务。
 
 Cloudflare OAuth Provider 1.x 要求显式 canonical resource。配置 `HUB_ORIGIN` 后，Worker 只接受该 origin，MCP 资源为其 `/mcp`；HTTP 只允许 loopback 测试地址。参考 https://developers.cloudflare.com/changelog/post/2026-10-01-workers-oauth-provider-1x/ 。缺少配置会返回 503，而不是 Worker 启动时崩溃。需真实 OAuth 验收。
+
+## OAuth 本地集成验收
+
+隔离环境中使用合成管理员会话，真实 OAuth 动态客户端注册、PKCE、同意、令牌交换及 MCP JSON-RPC 调用；不触碰真实 GitHub 登录或生产令牌。实际第三方客户端及真实 GitHub 身份仍需部署后测试。资源处理程序同时校验 OAuth token scope 和 D1 的逐站授权。

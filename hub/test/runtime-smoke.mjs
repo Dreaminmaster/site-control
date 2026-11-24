@@ -55,6 +55,29 @@ try{
  const mcp=await req("/mcp",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"fixture",version:"1"}}})});
  assert.equal(mcp.status,401,"unauthenticated MCP denied");
  const metadata=await check(await req("/.well-known/oauth-protected-resource/mcp"),200,"resource discovery");assert.equal((await metadata.json()).resource,base+"/mcp");
+
+ // Real OAuth provider issuance using synthetic owner session; no upstream GitHub login.
+ const redirectUri="http://127.0.0.1:8791/callback",verifier="x".repeat(64),challenge=createHash("sha256").update(verifier).digest("base64url");
+ const reg=await req("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_name:"Local smoke test",redirect_uris:[redirectUri],grant_types:["authorization_code","refresh_token"],response_types:["code"],token_endpoint_auth_method:"none"})});
+ assert.ok(reg.status===201||reg.status===200,"dynamic client registration: "+reg.status+" "+(reg.status>=400?await reg.text():""));
+ const client=await reg.json();assert.ok(client.client_id);
+ const params=new URLSearchParams({client_id:client.client_id,redirect_uri:redirectUri,response_type:"code",scope:"control:read control:propose",state:"local-smoke",code_challenge:challenge,code_challenge_method:"S256",resource:base+"/mcp"});
+ const consent=await check(await req("/authorize?"+params,{headers:{Cookie:cookie}}),200,"OAuth consent");
+ const nonce=(await consent.text()).match(/name='nonce' value='([a-f0-9]{64})'/)?.[1];assert.ok(nonce,"consent nonce");
+ const approved=await check(await post("/authorize",{nonce,site:"smoke-b",write_site:"smoke-b",propose:"yes"}),303,"OAuth grant");
+ const location=new URL(approved.headers.get("Location"));assert.equal(location.origin,new URL(redirectUri).origin);assert.equal(location.searchParams.get("state"),"local-smoke");
+ const code=location.searchParams.get("code");assert.ok(code,"authorization code");
+ const tokens=await check(await req("/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"authorization_code",client_id:client.client_id,redirect_uri:redirectUri,code,code_verifier:verifier,resource:base+"/mcp"})}),200,"OAuth token exchange");
+ const credential=await tokens.json();assert.ok(credential.access_token);
+ const rpc=async(method,params)=>{const r=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream","MCP-Protocol-Version":"2025-06-18"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});assert.equal(r.status,200,"MCP "+method);return r.json();};
+ const ls=await rpc("tools/call",{name:"list_sites",arguments:{}});assert.ok(!ls.error&&!ls.result?.isError,"list authorized sites");assert.deepEqual(JSON.parse(ls.result.content[0].text).map(x=>x.id),["smoke-b"]);
+ const denied=await rpc("tools/call",{name:"get_site_status",arguments:{site_id:"smoke-a"}});assert.equal(denied.result.isError,true,"OAuth site isolation");
+ const proposal=await rpc("tools/call",{name:"propose_site_change",arguments:{site_id:"smoke-b",expected_revision:0,reason:"OAuth fixture proposal",config:{...config,title:"MCP proposed"}}});assert.equal(JSON.parse(proposal.result.content[0].text).status,"pending");
+ const agentPage=await (await req("/admin?view=agents",{headers:{Cookie:cookie}})).text();const agentId=findProposal(agentPage,"revoke-agent");
+ await check(await post("/admin/revoke-agent",{id:agentId}),303,"revoke OAuth grant");
+ const deniedAfter=await req("/mcp",{method:"POST",headers:{Authorization:"Bearer "+credential.access_token,"Content-Type":"application/json",Accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"tools/list"})});assert.ok([401,403].includes(deniedAfter.status),"revoked OAuth grant denied");
+ console.log("PASS: local OAuth dynamic registration, PKCE, consent, token exchange, actual MCP tool calls, scoped access and revocation");
+
  console.log("PASS: local Worker HTTP onboarding, CSRF, tenant isolation, approved-only polling, CAS receipts, replay, rollback, revocation, and unauthenticated MCP rejection");
 }catch(e){console.error("Runtime smoke failed:",e.message);console.error(logs.replace(/Bearer [a-f0-9]{64}/g,"Bearer [redacted]"));process.exitCode=1;}
 finally{p.kill("SIGTERM");}
